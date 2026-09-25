@@ -26,7 +26,7 @@ import numpy as np
 from calibration.comparer import compare_trajectories
 from calibration.generator import ExperimentConfig, load_experiment_config
 from calibration.logger import save_calibration_csv
-from core.leapfrog import run_leapfrog
+from core.leapfrog import run_leapfrog_with_correction
 from core.physics import Body, System
 from core.rebound_reference import run_ias15
 
@@ -46,6 +46,8 @@ class WorkerResult:
             timesteps for this experiment.
         mean_energy_drift: Mean (signed) energy_drift across all sampled
             timesteps for this experiment.
+        n_corrections: Number of online correction events applied during
+            this experiment's Leapfrog run (0 if none were needed).
         elapsed_seconds: Wall-clock time this worker took to run.
         error: Error message if the worker failed, else None.
     """
@@ -54,6 +56,7 @@ class WorkerResult:
     csv_path: str | None
     mean_position_error: float | None
     mean_energy_drift: float | None
+    n_corrections: int | None
     elapsed_seconds: float
     error: str | None = None
 
@@ -101,19 +104,26 @@ def run_single_experiment(config_path: str, csv_dir: str) -> WorkerResult:
     try:
         system = _config_to_system(config)
 
-        leapfrog_traj = run_leapfrog(
-            system,
-            dt=config.dt,
-            total_time=config.total_time,
-            sample_interval=config.sample_interval,
-        )
+        # IAS15 must run first: run_leapfrog_with_correction needs the full
+        # IAS15 reference trajectory available up front so it has something
+        # to snap back to the moment its own error exceeds the threshold.
         ias15_traj = run_ias15(
             system,
             total_time=config.total_time,
             sample_interval=config.sample_interval,
         )
 
-        df = compare_trajectories(config, leapfrog_traj, ias15_traj)
+        leapfrog_traj, corrections = run_leapfrog_with_correction(
+            system,
+            dt=config.dt,
+            total_time=config.total_time,
+            reference_positions=ias15_traj.positions,
+            reference_velocities=ias15_traj.velocities,
+            reference_times=ias15_traj.times,
+            error_threshold=config.correction_threshold,
+        )
+
+        df = compare_trajectories(config, leapfrog_traj, ias15_traj, corrections)
         csv_path = save_calibration_csv(df, csv_dir, config.simulation_id)
 
         elapsed = time.perf_counter() - start
@@ -122,6 +132,7 @@ def run_single_experiment(config_path: str, csv_dir: str) -> WorkerResult:
             csv_path=csv_path,
             mean_position_error=float(df["position_error"].mean()),
             mean_energy_drift=float(df["energy_drift"].mean()),
+            n_corrections=len(corrections),
             elapsed_seconds=elapsed,
         )
     except Exception as exc:  # noqa: BLE001 - report failures without killing the pool
@@ -131,6 +142,7 @@ def run_single_experiment(config_path: str, csv_dir: str) -> WorkerResult:
             csv_path=None,
             mean_position_error=None,
             mean_energy_drift=None,
+            n_corrections=None,
             elapsed_seconds=elapsed,
             error=f"{type(exc).__name__}: {exc}",
         )
@@ -176,6 +188,7 @@ def run_calibration_batch(
                         f"[{completed}/{total}] OK   {result.simulation_id} "
                         f"(pos_err={result.mean_position_error:.3e}, "
                         f"energy_drift={result.mean_energy_drift:.3e}, "
+                        f"corrections={result.n_corrections}, "
                         f"{result.elapsed_seconds:.2f}s)"
                     )
                 else:

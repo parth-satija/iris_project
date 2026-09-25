@@ -23,7 +23,7 @@ import time
 
 import numpy as np
 
-from calibration.generator import generate_calibration_batch
+from calibration.generator import DEFAULT_CORRECTION_THRESHOLD, generate_calibration_batch
 from calibration.runner import DEFAULT_WORKERS, run_calibration_batch
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -66,6 +66,15 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=5.0,
         help="Total simulated duration per experiment (default: 5.0).",
+    )
+    parser.add_argument(
+        "--correction-threshold",
+        type=float,
+        default=DEFAULT_CORRECTION_THRESHOLD,
+        help=(
+            "RMS position-error threshold above which the Leapfrog state is "
+            f"snapped back to the IAS15 reference state (default: {DEFAULT_CORRECTION_THRESHOLD})."
+        ),
     )
     parser.add_argument(
         "--plot",
@@ -135,6 +144,7 @@ def main() -> None:
         base_seed=args.seed,
         dt=args.dt,
         total_time=args.total_time,
+        correction_threshold=args.correction_threshold,
     )
     print(f"Generated {len(config_paths)} configurations in {CONFIGS_DIR}\n")
 
@@ -156,6 +166,7 @@ def main() -> None:
     avg_energy_drift = (
         float(np.mean([r.mean_energy_drift for r in successful])) if successful else float("nan")
     )
+    total_corrections = sum(r.n_corrections for r in successful if r.n_corrections is not None)
 
     print("\n===== IRIS Calibration Summary =====")
     print(f"Experiments completed: {len(successful)}/{len(results)}")
@@ -166,6 +177,7 @@ def main() -> None:
     print(f"Total runtime:         {elapsed:.2f} s")
     print(f"Avg position error:    {avg_pos_error:.6e}")
     print(f"Avg energy drift:      {avg_energy_drift:.6e}")
+    print(f"Total corrections:     {total_corrections} (threshold={args.correction_threshold:g})")
     print("=====================================\n")
 
     if args.plot:

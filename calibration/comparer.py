@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 
 from calibration.generator import ExperimentConfig
-from core.leapfrog import Trajectory
+from core.leapfrog import CorrectionEvent, Trajectory
 from core.metrics import (
     angular_momentum_drift,
     closest_pair_relative_velocity,
@@ -36,6 +36,7 @@ def compare_trajectories(
     config: ExperimentConfig,
     leapfrog_traj: Trajectory,
     ias15_traj: Trajectory,
+    corrections: list[CorrectionEvent] | None = None,
 ) -> pd.DataFrame:
     """
     Compute the full calibration comparison table between a Leapfrog
@@ -44,8 +45,15 @@ def compare_trajectories(
     Args:
         config: The ExperimentConfig that produced both trajectories
             (used for simulation_id, seed, dt, body_count, g, softening).
-        leapfrog_traj: Trajectory returned by core.leapfrog.run_leapfrog.
+        leapfrog_traj: Trajectory returned by core.leapfrog.run_leapfrog or
+            core.leapfrog.run_leapfrog_with_correction.
         ias15_traj: Trajectory returned by core.rebound_reference.run_ias15.
+        corrections: Correction events returned alongside `leapfrog_traj`
+            by core.leapfrog.run_leapfrog_with_correction, if the
+            corrected integrator was used. Pass None (default) or an
+            empty list if no online correction was applied -- in that
+            case the correction-related columns below are filled with
+            correction_id=0 and NaN/0 as appropriate on every row.
 
     Returns:
         A Pandas DataFrame with one row per sampled timestep, containing
@@ -53,13 +61,25 @@ def compare_trajectories(
         simulation_id, seed, timestep, body_count, time, mass_ratio,
         min_distance, relative_velocity, acceleration, jerk,
         position_error, velocity_error, total_energy, energy_drift,
-        angular_momentum, angular_momentum_drift.
+        angular_momentum, angular_momentum_drift, correction_id,
+        time_since_last_correction, steps_since_last_correction,
+        error_at_trigger, correction_interval.
+
+        For the correction columns: `correction_id` on each row is the ID
+        of the most recent correction applied at or before that row (0 if
+        none yet); `time_since_last_correction` / `steps_since_last_correction`
+        are running counters that reset to 0 at each correction; and
+        `error_at_trigger` / `correction_interval` are only populated
+        (non-NaN) on the exact row where a correction was triggered.
 
     Raises:
         ValueError: If the two trajectories do not share identical
             timestamps (within floating point tolerance), which would
             indicate a sampling misconfiguration upstream.
     """
+    if corrections is None:
+        corrections = []
+    corrections_by_sample_idx = {event.sample_index: event for event in corrections}
     if leapfrog_traj.times.shape != ias15_traj.times.shape or not np.allclose(
         leapfrog_traj.times, ias15_traj.times, atol=1e-9
     ):
@@ -94,6 +114,13 @@ def compare_trajectories(
     )
 
     m_ratio = mass_ratio(masses)
+
+    # Running correction-tracking state, updated as we walk forward through
+    # the samples in order. `dt` (config.dt) is needed to translate a
+    # sample's elapsed time back into a Leapfrog step count.
+    last_correction_id = 0
+    last_correction_time = 0.0
+    last_correction_step = 0
 
     rows: list[dict] = []
     for idx in range(n_samples):
@@ -131,6 +158,29 @@ def compare_trajectories(
         l_mag = float(np.linalg.norm(l_vec))
         l_drift = angular_momentum_drift(l_vec, initial_l)
 
+        current_step = int(round(float(times[idx]) / config.dt))
+
+        correction_event = corrections_by_sample_idx.get(idx)
+        if correction_event is not None:
+            # This row is the exact sample where a correction fired: the
+            # trigger-specific columns are populated, and the running
+            # "since last correction" counters reset to zero here.
+            correction_id = correction_event.correction_id
+            error_at_trigger = correction_event.error_at_trigger
+            correction_interval = correction_event.correction_interval
+            time_since_last_correction = 0.0
+            steps_since_last_correction = 0
+
+            last_correction_id = correction_event.correction_id
+            last_correction_time = float(times[idx])
+            last_correction_step = current_step
+        else:
+            correction_id = last_correction_id
+            error_at_trigger = np.nan
+            correction_interval = np.nan
+            time_since_last_correction = float(times[idx]) - last_correction_time
+            steps_since_last_correction = current_step - last_correction_step
+
         rows.append(
             {
                 "simulation_id": config.simulation_id,
@@ -149,6 +199,11 @@ def compare_trajectories(
                 "energy_drift": e_drift,
                 "angular_momentum": l_mag,
                 "angular_momentum_drift": l_drift,
+                "correction_id": correction_id,
+                "time_since_last_correction": time_since_last_correction,
+                "steps_since_last_correction": steps_since_last_correction,
+                "error_at_trigger": error_at_trigger,
+                "correction_interval": correction_interval,
             }
         )
 

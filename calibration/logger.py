@@ -35,6 +35,11 @@ REQUIRED_COLUMNS: tuple[str, ...] = (
     "energy_drift",
     "angular_momentum",
     "angular_momentum_drift",
+    "correction_id",
+    "time_since_last_correction",
+    "steps_since_last_correction",
+    "error_at_trigger",
+    "correction_interval",
 )
 
 

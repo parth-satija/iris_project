@@ -20,7 +20,9 @@ around them:
    positions, compute forces/energy/momentum. No notion of time or
    integration lives here.
 2. **Two integrators** that both consume `core/physics.py`:
-   - `core/leapfrog.py` — the "fast" integrator under test.
+   - `core/leapfrog.py` — the "fast" integrator under test. As of the
+     online-correction feature, this module runs *in lockstep* with the
+     reference trajectory rather than fully independently (see §6.5).
    - `core/rebound_reference.py` — the "ground truth" integrator (thin
      wrapper around the REBOUND library's IAS15).
 3. **Calibration pipeline** (`calibration/`) — generates random systems,

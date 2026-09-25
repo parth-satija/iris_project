@@ -26,6 +26,12 @@ MASS_RANGE: tuple[float, float] = (0.5, 10.0)
 RADIUS_RANGE: tuple[float, float] = (1.0, 8.0)
 ECCENTRICITY_RANGE: tuple[float, float] = (0.0, 0.6)
 
+# Default RMS position-error threshold (core.metrics.position_error units,
+# i.e. same units as position) above which the online correction mechanism
+# in core.leapfrog.run_leapfrog_with_correction snaps the Leapfrog state
+# back to the IAS15 reference state. Configurable per experiment.
+DEFAULT_CORRECTION_THRESHOLD: float = 1.0e-2
+
 
 @dataclass
 class ExperimentConfig:
@@ -43,6 +49,9 @@ class ExperimentConfig:
         total_time: Total simulated duration.
         sample_interval: Time between recorded samples (must be a multiple
             of dt so Leapfrog and IAS15 samples align exactly).
+        correction_threshold: RMS position-error threshold above which the
+            online correction mechanism snaps the Leapfrog state back to
+            the IAS15 reference state (see core.leapfrog.run_leapfrog_with_correction).
         masses: List of body masses, length body_count.
         positions: List of [x, y, z] positions, length body_count.
         velocities: List of [vx, vy, vz] velocities, length body_count.
@@ -56,6 +65,7 @@ class ExperimentConfig:
     dt: float
     total_time: float
     sample_interval: float
+    correction_threshold: float
     masses: list[float]
     positions: list[list[float]]
     velocities: list[list[float]]
@@ -171,6 +181,7 @@ def generate_experiment_config(
     dt: float = 1.0e-3,
     total_time: float = 5.0,
     sample_interval: float | None = None,
+    correction_threshold: float = DEFAULT_CORRECTION_THRESHOLD,
 ) -> ExperimentConfig:
     """
     Generate a single randomized, reproducible experiment configuration.
@@ -184,6 +195,8 @@ def generate_experiment_config(
         dt: Leapfrog integration timestep.
         total_time: Total simulated duration.
         sample_interval: Sampling interval; defaults to 50 * dt if omitted.
+        correction_threshold: RMS position-error threshold that triggers
+            an online correction (Leapfrog state snapped to IAS15 state).
 
     Returns:
         A populated ExperimentConfig instance.
@@ -211,6 +224,7 @@ def generate_experiment_config(
         dt=dt,
         total_time=total_time,
         sample_interval=sample_interval,
+        correction_threshold=correction_threshold,
         masses=masses,
         positions=positions,
         velocities=velocities,
@@ -258,6 +272,7 @@ def generate_calibration_batch(
     base_seed: int = 0,
     dt: float = 1.0e-3,
     total_time: float = 5.0,
+    correction_threshold: float = DEFAULT_CORRECTION_THRESHOLD,
 ) -> list[str]:
     """
     Generate a batch of `n_experiments` randomized configurations, cycling
@@ -270,6 +285,8 @@ def generate_calibration_batch(
             guaranteeing each experiment is independently reproducible.
         dt: Leapfrog timestep shared by all generated experiments.
         total_time: Total simulated duration shared by all experiments.
+        correction_threshold: RMS position-error threshold shared by all
+            generated experiments; see ExperimentConfig.correction_threshold.
 
     Returns:
         List of file paths to the generated JSON configuration files, in
@@ -286,6 +303,7 @@ def generate_calibration_batch(
             body_count=body_count,
             dt=dt,
             total_time=total_time,
+            correction_threshold=correction_threshold,
         )
         path = save_experiment_config(config, configs_dir)
         paths.append(path)
