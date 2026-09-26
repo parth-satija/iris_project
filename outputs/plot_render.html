@@ -1,0 +1,1226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>IRIS Calibration Simulation Plots</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-zoom/2.0.1/chartjs-plugin-zoom.min.js"></script>
+<style>
+    :root { color-scheme: dark; }
+    body {
+        font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+        background: #1e1e1e; color: #eee; margin: 0; padding: 20px;
+    }
+    h1 { text-align: center; margin-bottom: 4px; }
+    p.subtitle { text-align: center; color: #999; margin-top: 0; font-size: 0.9em; }
+
+    .toolbar {
+        max-width: 1200px; margin: 20px auto; background: #2a2a2a;
+        border-radius: 8px; padding: 16px 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+    }
+    .toolbar-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .toolbar label.file-btn {
+        background: #3a7bd5; color: #fff; padding: 8px 16px; border-radius: 6px;
+        cursor: pointer; font-size: 0.9em; user-select: none;
+    }
+    .toolbar label.file-btn:hover { background: #4a8be5; }
+    .toolbar input[type="file"] { display: none; }
+    .toolbar button {
+        background: #444; color: #eee; border: none; padding: 8px 16px;
+        border-radius: 6px; cursor: pointer; font-size: 0.9em;
+    }
+    .toolbar button:hover { background: #555; }
+    .hint { color: #999; font-size: 0.85em; }
+
+    #fileList { margin-top: 14px; display: flex; flex-direction: column; gap: 6px; }
+    .file-row {
+        display: flex; align-items: center; gap: 10px; background: #232323;
+        border-radius: 6px; padding: 8px 12px; font-size: 0.88em; flex-wrap: wrap;
+    }
+    .swatch { width: 14px; height: 14px; border-radius: 3px; flex-shrink: 0; }
+    .file-row .sim-id { font-weight: 600; }
+    .file-row .stats { color: #aaa; margin-left: auto; display: flex; gap: 16px; }
+    .file-row .remove-btn {
+        background: transparent; color: #e06666; border: 1px solid #e06666;
+        border-radius: 4px; padding: 2px 8px; cursor: pointer; font-size: 0.85em;
+    }
+    .file-row .remove-btn:hover { background: #e06666; color: #1e1e1e; }
+    .empty-note { color: #777; font-style: italic; padding: 8px 0; text-align: center; }
+
+    .section-title {
+        max-width: 1400px; margin: 34px auto 6px auto; padding: 0 4px;
+        font-size: 1.1em; color: #bbb; border-bottom: 1px solid #3a3a3a; padding-bottom: 6px;
+    }
+
+    .container {
+        display: flex; flex-wrap: wrap; justify-content: center; gap: 20px;
+        max-width: 1400px; margin: 20px auto;
+    }
+    .card {
+        background: #2d2d2d; padding: 15px; border-radius: 8px;
+        width: 45%; min-width: 460px; box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+    }
+    .card h3 { margin-top: 0; font-size: 1em; }
+    .card .desc { color: #999; font-size: 0.78em; margin: -6px 0 10px 0; }
+    canvas { background: #1e1e1e; border-radius: 4px; }
+    .card.wide { width: 94%; }
+</style>
+</head>
+<body>
+
+<h1>IRIS Calibration Simulation Plots</h1>
+<p class="subtitle">Load one or more <code>outputs/csv/*_body*.csv</code> files (per-body logs) to compare Leapfrog-vs-IAS15 calibration runs.
+    Each log only contains one row per correction event that THIS BODY actually triggered -- i.e. this body's
+    own error, not just the system-wide RMS error, crossed the correction threshold -- see calibration/logger.py.</p>
+
+<div class="toolbar">
+    <div class="toolbar-row">
+        <label class="file-btn" for="fileInput">+ Load CSV file(s)</label>
+        <input type="file" id="fileInput" accept=".csv" multiple>
+        <button id="clearBtn">Clear all</button>
+        <span class="hint">Scroll to zoom a chart, drag to pan, double-click to reset.</span>
+    </div>
+    <div id="fileList"></div>
+</div>
+
+<div class="section-title">Per-correction-event metrics (per loaded body log)</div>
+<div class="container">
+    <div class="card"><h3>Position Error vs Time</h3>
+        <div class="desc">RMS position error between Leapfrog and IAS15 for this body, at each correction
+            event (log scale). Only correction timestamps are logged now, so each marker is one
+            correction -- the dashed line between markers is just a visual guide, not a continuous trace.</div>
+        <canvas id="chart_position_error"></canvas></div>
+
+    <div class="card"><h3>Velocity Error vs Time</h3>
+        <div class="desc">RMS velocity error between Leapfrog and IAS15 for this body, at each correction
+            event (log scale). Same caveat as Position Error vs Time: markers are real samples, the
+            connecting line is not.</div>
+        <canvas id="chart_velocity_error"></canvas></div>
+
+    <div class="card"><h3>Energy Drift vs Time</h3>
+        <div class="desc">Relative drift of total system energy from its initial value, sampled at each
+            correction event.</div>
+        <canvas id="chart_energy_drift"></canvas></div>
+
+    <div class="card"><h3>Angular Momentum Drift vs Time</h3>
+        <div class="desc">Relative drift of total system angular momentum magnitude, sampled at each
+            correction event.</div>
+        <canvas id="chart_angular_momentum_drift"></canvas></div>
+
+    <div class="card"><h3>Min Pairwise Distance vs Time</h3>
+        <div class="desc">Closest approach between any two bodies in the system, sampled at each
+            correction event.</div>
+        <canvas id="chart_min_distance"></canvas></div>
+
+    <div class="card"><h3>Total Energy vs Time</h3>
+        <div class="desc">Kinetic + potential energy of the Leapfrog trajectory, sampled at each
+            correction event.</div>
+        <canvas id="chart_total_energy"></canvas></div>
+
+    <div class="card"><h3>Max Acceleration vs Time</h3>
+        <div class="desc">This body's gravitational acceleration magnitude, sampled at each
+            correction event.</div>
+        <canvas id="chart_acceleration"></canvas></div>
+
+    <div class="card"><h3>Jerk vs Time</h3>
+        <div class="desc">Finite-difference estimate of da/dt for this body, sampled at each
+            correction event.</div>
+        <canvas id="chart_jerk"></canvas></div>
+
+    <div class="card wide"><h3>Correction Events vs Time</h3>
+        <div class="desc">Each point is a moment a correction fired AND this body's own error was one of
+            the ones that crossed the threshold (calibration/logger.py only logs a correction to bodies
+            that actually triggered it, not every body of the system); y = THIS body's own position error
+            at that instant (the pre-correction Leapfrog state vs. the IAS15 state it was snapped to).
+            Hover a point to also see the system-wide RMS error that actually triggered the correction.
+            Only rendered for CSVs produced with the online correction mechanism
+            (core.leapfrog.run_leapfrog_with_correction).</div>
+        <canvas id="chart_corrections"></canvas></div>
+
+    <div class="card wide"><h3>Situation Timeline (same time axis as above)</h3>
+        <div class="desc">One row per situation type; a marker means that situation was active for that
+            body at one of ITS OWN correction events (only rows where this body's own error crossed the
+            threshold are logged at all -- see calibration/logger.py). Shares the exact time domain with
+            the "Correction Events vs Time" chart above (and stays synced when you pan/zoom either one);
+            each marker corresponds directly to a row in that scatter plot -- look straight up from a
+            point there to see which situations coincided with it. "stable" is intentionally left out
+            (it's the default, non-event state); "quiescent_regime" is kept since it only marks a
+            genuinely sustained calm stretch.</div>
+        <canvas id="chart_situation_timeline"></canvas></div>
+
+    <div class="card wide"><h3>Correction Interval vs Time</h3>
+        <div class="desc">At each correction event, the elapsed simulated time since the PREVIOUS
+            correction: a rising trend means corrections are getting rarer (the run is stabilizing); a
+            falling trend means they're getting more frequent (destabilizing). This replaces the old
+            "time since last correction" sawtooth view, which needed dense per-timestep samples that are
+            no longer logged (every logged row is now itself a correction, so that value was always 0).
+            correction_id/correction_interval are SYSTEM-wide (identical wherever a correction appears at
+            all), but each body's file now only contains the corrections IT OWNED (its own error crossed
+            the threshold, not just the system-wide RMS -- see calibration/logger.py), so no single loaded
+            file is guaranteed to hold the full timeline any more. One line is drawn per loaded simulation,
+            reconstructed from the union of every loaded body's own correction_id rows for that simulation
+            (every correction is guaranteed to be owned by at least one body, so nothing is lost).</div>
+        <canvas id="chart_time_since_correction"></canvas></div>
+</div>
+
+<div class="section-title">Correction diagnostics</div>
+<div class="container">
+    <div class="card"><h3>Situations Distribution (Pie Chart)</h3>
+        <div class="desc">Share of total situational-event activations by type, summed across every
+            correction-event row of every visible file (each row is a correction that body itself
+            triggered, not merely one that occurred somewhere in the system -- see calibration/logger.py --
+            so this reflects what tends to be happening at a body's OWN corrections, not over the whole
+            run). Situations are not mutually exclusive (several can be true on the same row), so slices
+            reflect relative frequency of each situation type, not a partition of time.</div>
+        <canvas id="chart_situations_pie"></canvas></div>
+
+    <div class="card wide"><h3>Number of Corrections vs Situation (Histogram)</h3>
+        <div class="desc">Counts how many of THIS BODY'S OWN corrections coincided with each detected
+            situation (calibration/events.py flags) -- since calibration/logger.py only logs a correction
+            to bodies whose own error crossed the threshold, this is no longer every correction in the
+            system, just the ones this body was responsible for. Bars are stacked per loaded file. A
+            situation with a tall bar is one that tends to force this body specifically into triggering a
+            correction. (Every logged row is now a correction event, so this covers the whole file.)</div>
+        <canvas id="chart_corrections_by_situation"></canvas></div>
+
+    <div class="card wide"><h3>Correction Interval Distribution (Histogram)</h3>
+        <div class="desc">Distribution of elapsed simulated time between consecutive corrections
+            (correction_interval), reconstructed per simulation from the union of every loaded body's own
+            corrections and deduped by correction_id, so an event logged by more than one body (multiple
+            bodies can cross the threshold at once) is only counted once. Bars are stacked per simulation.</div>
+        <canvas id="chart_correction_interval_hist"></canvas></div>
+
+    <div class="card"><h3>Minimum Pairwise Distance with Correction Events Overlay</h3>
+        <div class="desc">system_min_distance at each of THIS BODY'S OWN correction events (dashed line,
+            for trend), with a triangle marker on every point for emphasis. Since only this body's own
+            corrections are logged (see calibration/logger.py), the line and the overlay are the same
+            points by construction, and different bodies of the same run will show different subsets of
+            triangles -- kept as two layers mainly so individual correction events stand out clearly
+            against the trend line.</div>
+        <canvas id="chart_min_distance_corrections_overlay"></canvas></div>
+
+    <div class="card"><h3>Error Growth Between Corrections (Normalized)</h3>
+        <div class="desc">error_at_trigger / correction_interval at each correction event: how fast
+            error accumulated per unit simulated time before the correction fired.</div>
+        <canvas id="chart_error_growth_normalized"></canvas></div>
+
+    <div class="card"><h3>Energy Drift vs Number of Corrections</h3>
+        <div class="desc">One point per loaded BODY: mean energy_drift across this body's own correction
+            events vs. the number of corrections this body itself triggered (calibration/logger.py only
+            logs a correction to bodies whose own error crossed the threshold -- see
+            comparer.py's body_triggered_correction -- so both the sample count and the x-value now
+            genuinely differ from body to body, even within the same run).</div>
+        <canvas id="chart_energy_drift_vs_corrections"></canvas></div>
+
+    <div class="card"><h3>Angular Momentum Drift vs Number of Corrections</h3>
+        <div class="desc">One point per loaded BODY (same reasoning as the Energy Drift chart above): mean
+            angular_momentum_drift across this body's own correction events vs. the number of corrections
+            this body itself triggered.</div>
+        <canvas id="chart_angular_momentum_drift_vs_corrections"></canvas></div>
+</div>
+
+<div class="section-title">Encounter &amp; accuracy relationships (at correction events)</div>
+<div class="container">
+    <div class="card"><h3>Position Error vs Minimum Pairwise Distance</h3>
+        <div class="desc">At each correction event: does Leapfrog accuracy degrade as bodies get closer
+            together? Both axes log scale.</div>
+        <canvas id="chart_poserr_vs_mindist"></canvas></div>
+
+    <div class="card"><h3>Velocity Error vs Minimum Pairwise Distance</h3>
+        <div class="desc">Same question for velocity error, at each correction event. Both axes log scale.</div>
+        <canvas id="chart_velerr_vs_mindist"></canvas></div>
+
+    <div class="card"><h3>Relative Velocity vs Minimum Pairwise Distance</h3>
+        <div class="desc">At each correction event: this body's relative velocity to its nearest neighbor
+            vs. the system's minimum pairwise distance -- separates "slow" from "fast" close encounters.</div>
+        <canvas id="chart_relvel_vs_mindist"></canvas></div>
+
+    <div class="card"><h3>Jerk vs Position Error</h3>
+        <div class="desc">At each correction event: tests whether jerk is a good predictor of Leapfrog
+            error. Both axes log scale.</div>
+        <canvas id="chart_jerk_vs_poserr"></canvas></div>
+
+    <div class="card"><h3>Maximum Acceleration vs Position Error</h3>
+        <div class="desc">At each correction event: tests whether acceleration magnitude alone predicts
+            Leapfrog error. Both axes log scale.</div>
+        <canvas id="chart_accel_vs_poserr"></canvas></div>
+</div>
+
+<div class="section-title">Integrator trade-off</div>
+<div class="container">
+    <div class="card wide"><h3>Accuracy vs Computational Cost (Pareto Curve)</h3>
+        <div class="desc">"Hybrid Scheduler" points are real, one per loaded body: x = number of
+            corrections THIS BODY itself triggered (calibration/logger.py only logs a correction to bodies
+            whose own error crossed the threshold, so this is this body's own count, not the run's total --
+            still a reasonable per-body cost proxy, since every correction it owns means an extra IAS15
+            re-sync it needed), y = mean of body_position_error_at_trigger (this body's own pre-correction
+            error at each of its own correction events -- the log no longer contains post-correction/
+            steady-state samples to average instead). "Leapfrog" approximates the uncorrected integrator
+            using body_position_error_at_trigger from just this body's FIRST own correction -- the error
+            that accumulated before this body needed correcting for the first time, which is the only
+            uncorrected-Leapfrog signal still present now that only (owned) correction timestamps are
+            logged. "IAS15" is plotted as a single high-cost, near-zero-error reference anchor, since
+            IAS15 is the ground-truth trajectory itself. NOTE: the per-body CSV schema does not log
+            wall-clock integration time, so the x-axis here is a cost proxy, not measured seconds -- treat
+            this chart as illustrative of the accuracy/cost trend, not an absolute benchmark.</div>
+        <canvas id="chart_pareto"></canvas></div>
+</div>
+
+<script>
+// ---------------------------------------------------------------------------
+// State: one entry per loaded CSV file, keyed by a unique fileKey.
+// ---------------------------------------------------------------------------
+const files = {};          // fileKey -> { name, simId, simulationId, rows, color, visible, nCorrections }
+let fileCounter = 0;
+
+const PALETTE = [
+    "#4dc9f6", "#f67019", "#f53794", "#537bc4", "#acc236",
+    "#166a8f", "#00a950", "#58595b", "#8549ba", "#e06666",
+];
+function colorForIndex(i) { return PALETTE[i % PALETTE.length]; }
+
+// ---------------------------------------------------------------------------
+// Chart definitions: declarative list, each renders as a line chart of
+// column vs time, one dataset per visible file.
+// ---------------------------------------------------------------------------
+const LINE_CHARTS = [
+    { id: "chart_position_error", column: "position_error", log: true },
+    { id: "chart_velocity_error", column: "velocity_error", log: true },
+    { id: "chart_energy_drift", column: "energy_drift", log: false },
+    { id: "chart_angular_momentum_drift", column: "angular_momentum_drift", log: false },
+    { id: "chart_min_distance", column: "system_min_distance", log: false },
+    { id: "chart_total_energy", column: "total_energy", log: false },
+    { id: "chart_acceleration", column: "acceleration", log: true },
+    { id: "chart_jerk", column: "jerk", log: true },
+];
+
+// Situation/event boolean columns (see calibration/events.py) used by the
+// "Number of Corrections vs Situation" histogram.
+const SITUATION_COLUMNS = [
+    "close_encounter",
+    "rapid_approach",
+    "rapid_separation",
+    "high_relative_velocity_encounter",
+    "near_collision",
+    "strong_acceleration",
+    "high_jerk",
+    "acceleration_spike",
+    "closest_pair_switch",
+    "hierarchical_configuration",
+    "near_symmetric_configuration",
+    "chaotic_scattering",
+    "ejection_escape",
+    "temporary_capture",
+    "strong_mass_ratio_interaction",
+    "stable",
+    "quiescent_regime",
+];
+
+// Same list, minus "stable" -- used by the pie chart and the situation
+// timeline, where "stable" (the default, non-event majority state) would
+// dominate/clutter the visualization far more than it informs.
+const TIMELINE_SITUATION_COLUMNS = SITUATION_COLUMNS.filter((c) => c !== "stable");
+
+// Distinct color per situation type, generated around the color wheel so it
+// scales cleanly regardless of how many situation columns exist.
+function situationColor(index, total) {
+    const hue = Math.round((360 * index) / Math.max(total, 1));
+    return `hsl(${hue}, 70%, 60%)`;
+}
+
+// Simple scatter-chart definitions: x column vs y column, one dataset per
+// visible file, points only (no connecting line).
+const SCATTER_CHARTS = [
+    { id: "chart_poserr_vs_mindist", x: "system_min_distance", y: "position_error", xLog: true, yLog: true, xLabel: "system_min_distance", yLabel: "position_error" },
+    { id: "chart_velerr_vs_mindist", x: "system_min_distance", y: "velocity_error", xLog: true, yLog: true, xLabel: "system_min_distance", yLabel: "velocity_error" },
+    { id: "chart_relvel_vs_mindist", x: "system_min_distance", y: "relative_velocity", xLog: true, yLog: false, xLabel: "system_min_distance", yLabel: "relative_velocity" },
+    { id: "chart_jerk_vs_poserr", x: "jerk", y: "position_error", xLog: true, yLog: true, xLabel: "jerk", yLabel: "position_error" },
+    { id: "chart_accel_vs_poserr", x: "acceleration", y: "position_error", xLog: true, yLog: true, xLabel: "acceleration", yLabel: "position_error" },
+];
+
+const chartInstances = {};  // chart id -> Chart.js instance
+
+function isNum(v) {
+    return typeof v === "number" && Number.isFinite(v);
+}
+
+// Situational-event flag columns are written as 0/1 by calibration/logger.py
+// (see BOOLEAN_COLUMNS there) specifically so they parse unambiguously as
+// numbers. This also tolerates older CSVs that still have pandas' default
+// "True"/"False" strings, or a boolean parsed some other way.
+function isTrue(v) {
+    return v === 1 || v === true || v === "1" || v === "True" || v === "true" || v === "TRUE";
+}
+
+// ---------------------------------------------------------------------------
+// CSV loading
+// ---------------------------------------------------------------------------
+document.getElementById("fileInput").addEventListener("change", (evt) => {
+    const selected = Array.from(evt.target.files || []);
+    selected.forEach(loadFile);
+    evt.target.value = ""; // allow re-selecting the same file later
+});
+
+document.getElementById("clearBtn").addEventListener("click", () => {
+    Object.keys(files).forEach((k) => delete files[k]);
+    renderFileList();
+    renderAllCharts();
+});
+
+function loadFile(file) {
+    Papa.parse(file, {
+        header: true,
+        dynamicTyping: true,
+        skipEmptyLines: true,
+        complete: (result) => {
+            const rows = result.data.filter((r) => isNum(r.time));
+            if (rows.length === 0) {
+                alert(`"${file.name}" has no usable rows (missing/invalid "time" column?).`);
+                return;
+            }
+            rows.sort((a, b) => a.time - b.time);
+
+            const key = `f${fileCounter++}`;
+            const baseId = rows[0].simulation_id || file.name.replace(/\.csv$/i, "");
+            const bodyName = rows[0].body_name;
+            const simId = bodyName ? `${baseId} (${bodyName})` : baseId;
+            const nCorrections = new Set(
+                rows.filter((r) => isNum(r.correction_id) && r.correction_id > 0).map((r) => r.correction_id)
+            ).size;
+
+            files[key] = {
+                name: file.name,
+                simId,
+                simulationId: baseId,
+                rows,
+                color: colorForIndex(Object.keys(files).length),
+                visible: true,
+                nCorrections,
+            };
+            renderFileList();
+            renderAllCharts();
+        },
+        error: (err) => alert(`Failed to parse "${file.name}": ${err.message}`),
+    });
+}
+
+function removeFile(key) {
+    delete files[key];
+    // Recolor remaining files so colors stay compact/consistent.
+    Object.keys(files).forEach((k, i) => { files[k].color = colorForIndex(i); });
+    renderFileList();
+    renderAllCharts();
+}
+
+function toggleVisible(key) {
+    files[key].visible = !files[key].visible;
+    renderAllCharts();
+}
+
+// ---------------------------------------------------------------------------
+// File list UI
+// ---------------------------------------------------------------------------
+function renderFileList() {
+    const container = document.getElementById("fileList");
+    const keys = Object.keys(files);
+    if (keys.length === 0) {
+        container.innerHTML = '<div class="empty-note">No files loaded yet.</div>';
+        return;
+    }
+    container.innerHTML = "";
+    keys.forEach((key) => {
+        const f = files[key];
+        const row = document.createElement("div");
+        row.className = "file-row";
+
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.checked = f.visible;
+        checkbox.addEventListener("change", () => toggleVisible(key));
+
+        const swatch = document.createElement("span");
+        swatch.className = "swatch";
+        swatch.style.background = f.color;
+
+        const label = document.createElement("span");
+        label.className = "sim-id";
+        label.textContent = f.simId;
+
+        const fname = document.createElement("span");
+        fname.style.color = "#888";
+        fname.textContent = `(${f.name})`;
+
+        const stats = document.createElement("span");
+        stats.className = "stats";
+        stats.innerHTML =
+            `<span>${f.rows.length} rows</span>` +
+            `<span>${f.nCorrections} correction${f.nCorrections === 1 ? "" : "s"}</span>`;
+
+        const removeBtn = document.createElement("button");
+        removeBtn.className = "remove-btn";
+        removeBtn.textContent = "Remove";
+        removeBtn.addEventListener("click", () => removeFile(key));
+
+        row.append(checkbox, swatch, label, fname, stats, removeBtn);
+        container.appendChild(row);
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Shared chart option builders
+// ---------------------------------------------------------------------------
+function baseOptions(logScale, xLabel, yLabel) {
+    return {
+        responsive: true,
+        animation: false,
+        parsing: false,
+        interaction: { mode: "nearest", intersect: false },
+        scales: {
+            x: {
+                type: "linear",
+                title: { display: true, text: xLabel || "time", color: "#ccc" },
+                ticks: { color: "#ccc" },
+                grid: { color: "#3a3a3a" },
+            },
+            y: {
+                type: logScale ? "logarithmic" : "linear",
+                title: { display: !!yLabel, text: yLabel || "", color: "#ccc" },
+                ticks: { color: "#ccc" },
+                grid: { color: "#3a3a3a" },
+            },
+        },
+        plugins: {
+            legend: { labels: { color: "#eee" } },
+            zoom: {
+                pan: { enabled: true, mode: "x" },
+                zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: "x" },
+            },
+        },
+    };
+}
+
+function scatterOptions(xLog, yLog, xLabel, yLabel) {
+    const opts = baseOptions(yLog, xLabel, yLabel);
+    opts.scales.x.type = xLog ? "logarithmic" : "linear";
+    opts.plugins.zoom.zoom.mode = "xy";
+    opts.plugins.zoom.pan.mode = "xy";
+    return opts;
+}
+
+function barOptions(xLabel, yLabel, stacked) {
+    return {
+        responsive: true,
+        animation: false,
+        interaction: { mode: "nearest", intersect: false },
+        scales: {
+            x: {
+                stacked: !!stacked,
+                title: { display: true, text: xLabel || "", color: "#ccc" },
+                ticks: { color: "#ccc" },
+                grid: { color: "#3a3a3a" },
+            },
+            y: {
+                stacked: !!stacked,
+                beginAtZero: true,
+                title: { display: true, text: yLabel || "count", color: "#ccc" },
+                ticks: { color: "#ccc" },
+                grid: { color: "#3a3a3a" },
+            },
+        },
+        plugins: {
+            legend: { labels: { color: "#eee" } },
+        },
+    };
+}
+
+function getOrCreateChart(canvasId, type, options) {
+    if (chartInstances[canvasId]) return chartInstances[canvasId];
+    const ctx = document.getElementById(canvasId).getContext("2d");
+    chartInstances[canvasId] = new Chart(ctx, { type, data: { datasets: [] }, options });
+    return chartInstances[canvasId];
+}
+
+function visibleFiles() {
+    return Object.values(files).filter((f) => f.visible);
+}
+
+// ---------------------------------------------------------------------------
+// Per-correction-event "line" charts. Only correction timestamps are logged
+// now (see calibration/logger.py), so these are no longer continuous traces:
+// each marker is a real sample, and the dashed connecting line is only a
+// visual guide across the (often large, irregular) gaps between corrections.
+// ---------------------------------------------------------------------------
+function renderLineChart(def) {
+    const options = baseOptions(def.log, "time", def.column);
+    const chart = getOrCreateChart(def.id, "line", options);
+
+    chart.data.datasets = visibleFiles().map((f) => {
+        const data = f.rows
+            .map((r) => ({ x: r.time, y: r[def.column] }))
+            .filter((p) => isNum(p.x) && isNum(p.y) && (!def.log || p.y > 0));
+        return {
+            label: f.simId,
+            data,
+            borderColor: f.color,
+            backgroundColor: f.color,
+            borderWidth: 1.5,
+            borderDash: [5, 4],
+            pointRadius: 3,
+            pointHoverRadius: 5,
+            tension: 0,
+        };
+    });
+    chart.options = options;
+    chart.update();
+}
+
+function renderCorrectionChart() {
+    const options = baseOptions(true, "time", "body_position_error_at_trigger");
+    options.plugins.tooltip = {
+        callbacks: {
+            label: (ctx) => {
+                const raw = ctx.raw;
+                const sysErr = isNum(raw.systemError) ? raw.systemError.toExponential(3) : "n/a";
+                return `${ctx.dataset.label}: this body=${raw.y.toExponential(3)}, system RMS=${sysErr}`;
+            },
+        },
+    };
+    // Keep the timeline chart's x-axis in lockstep whenever this chart is
+    // panned/zoomed, so a point up here always lines up with the situation
+    // bars directly below it.
+    options.plugins.zoom.zoom.onZoomComplete = ({ chart }) => syncXAxis(chart, "chart_situation_timeline");
+    options.plugins.zoom.pan.onPanComplete = ({ chart }) => syncXAxis(chart, "chart_situation_timeline");
+
+    const chart = getOrCreateChart("chart_corrections", "scatter", options);
+
+    chart.data.datasets = visibleFiles().map((f) => {
+        const data = f.rows
+            .map((r) => ({ x: r.time, y: r.body_position_error_at_trigger, systemError: r.error_at_trigger }))
+            .filter((p) => isNum(p.x) && isNum(p.y) && p.y > 0);
+        return {
+            label: `${f.simId} (${data.length} correction${data.length === 1 ? "" : "s"})`,
+            data,
+            borderColor: f.color,
+            backgroundColor: f.color,
+            pointRadius: 5,
+            pointHoverRadius: 7,
+            showLine: false,
+        };
+    });
+    chart.options = options;
+    chart.update();
+}
+
+// ---------------------------------------------------------------------------
+// Situation Timeline: one horizontal bar-row per situation type, with a
+// segment drawn for every contiguous stretch of time that situation was
+// active. Shares its time domain with chart_corrections (see
+// computeSharedTimeRange / syncXAxis) so the two charts read as one view.
+// ---------------------------------------------------------------------------
+function computeIntervals(rows, column) {
+    // Collapse a boolean column's True/False sequence over time into a list
+    // of [startTime, endTime] runs. A single isolated True sample still gets
+    // a visible sliver by extending to the next sample's time (or, for the
+    // very last sample, backwards by the median sample spacing).
+    const times = rows.map((r) => r.time).filter(isNum);
+    const spacings = [];
+    for (let i = 1; i < times.length; i++) spacings.push(times[i] - times[i - 1]);
+    spacings.sort((a, b) => a - b);
+    const medianSpacing = spacings.length > 0 ? spacings[Math.floor(spacings.length / 2)] : 1;
+
+    const intervals = [];
+    let runStart = null;
+    let lastTime = null;
+    for (const r of rows) {
+        if (!isNum(r.time)) continue;
+        const active = isTrue(r[column]);
+        if (active && runStart === null) runStart = r.time;
+        if (!active && runStart !== null) {
+            const end = lastTime > runStart ? lastTime : runStart + medianSpacing;
+            intervals.push([runStart, end]);
+            runStart = null;
+        }
+        lastTime = r.time;
+    }
+    if (runStart !== null) {
+        const end = lastTime > runStart ? lastTime : runStart + medianSpacing;
+        intervals.push([runStart, end]);
+    }
+    return intervals;
+}
+
+function computeSharedTimeRange() {
+    let min = Infinity;
+    let max = -Infinity;
+    visibleFiles().forEach((f) => {
+        f.rows.forEach((r) => {
+            if (isNum(r.time)) {
+                if (r.time < min) min = r.time;
+                if (r.time > max) max = r.time;
+            }
+        });
+    });
+    return Number.isFinite(min) && Number.isFinite(max) ? { min, max } : null;
+}
+
+function syncXAxis(sourceChart, targetId) {
+    const target = chartInstances[targetId];
+    if (!target) return;
+    target.options.scales.x.min = sourceChart.scales.x.min;
+    target.options.scales.x.max = sourceChart.scales.x.max;
+    target.update("none");
+}
+
+function renderSituationTimelineChart() {
+    const options = {
+        responsive: true,
+        animation: false,
+        parsing: false,
+        indexAxis: "y",
+        interaction: { mode: "nearest", intersect: true },
+        scales: {
+            x: {
+                type: "linear",
+                title: { display: true, text: "time", color: "#ccc" },
+                ticks: { color: "#ccc" },
+                grid: { color: "#3a3a3a" },
+            },
+            y: {
+                type: "category",
+                labels: TIMELINE_SITUATION_COLUMNS,
+                stacked: false,
+                ticks: { color: "#ccc" },
+                grid: { color: "#3a3a3a" },
+            },
+        },
+        plugins: {
+            legend: { labels: { color: "#eee" } },
+            tooltip: {
+                callbacks: {
+                    label: (ctx) => {
+                        const [start, end] = ctx.raw.x;
+                        const situationName = TIMELINE_SITUATION_COLUMNS[ctx.raw.y] ?? ctx.raw.y;
+                        return `${ctx.dataset.label}: ${situationName} [${start.toFixed(3)} - ${end.toFixed(3)}]`;
+                    },
+                },
+            },
+            zoom: {
+                pan: {
+                    enabled: true,
+                    mode: "x",
+                    onPanComplete: ({ chart }) => syncXAxis(chart, "chart_corrections"),
+                },
+                zoom: {
+                    wheel: { enabled: true },
+                    pinch: { enabled: true },
+                    mode: "x",
+                    onZoomComplete: ({ chart }) => syncXAxis(chart, "chart_corrections"),
+                },
+            },
+        },
+    };
+
+    const range = computeSharedTimeRange();
+    if (range) {
+        options.scales.x.min = range.min;
+        options.scales.x.max = range.max;
+    }
+
+    const chart = getOrCreateChart("chart_situation_timeline", "bar", options);
+
+    chart.data.labels = TIMELINE_SITUATION_COLUMNS;
+    chart.data.datasets = visibleFiles().map((f) => {
+        const data = [];
+        // NOTE: with parsing:false the category y-scale never gets to run its
+        // normal label -> index lookup, so a raw label string here (e.g.
+        // "close_encounter") resolves to NaN and nothing is drawn. Pass the
+        // numeric index into TIMELINE_SITUATION_COLUMNS instead; the scale's
+        // `labels` option (set above) still supplies the tick text.
+        TIMELINE_SITUATION_COLUMNS.forEach((col, colIndex) => {
+            computeIntervals(f.rows, col).forEach(([start, end]) => {
+                data.push({ x: [start, end], y: colIndex });
+            });
+        });
+        return {
+            label: f.simId,
+            data,
+            backgroundColor: f.color,
+            borderColor: f.color,
+            barThickness: Math.max(4, Math.floor(18 / visibleFiles().length)),
+        };
+    });
+    chart.options = options;
+    chart.update();
+}
+
+// ---------------------------------------------------------------------------
+// Situations Distribution: aggregate pie chart of activation counts by
+// situation type, summed across every visible file's rows.
+// ---------------------------------------------------------------------------
+function renderSituationsPieChart() {
+    const options = {
+        responsive: true,
+        animation: false,
+        plugins: {
+            legend: { position: "right", labels: { color: "#eee", boxWidth: 12, font: { size: 10 } } },
+            tooltip: {
+                callbacks: {
+                    label: (ctx) => `${ctx.label}: ${ctx.parsed}`,
+                },
+            },
+        },
+    };
+    const chart = getOrCreateChart("chart_situations_pie", "pie", options);
+
+    const vf = visibleFiles();
+    const counts = TIMELINE_SITUATION_COLUMNS.map(
+        (col) => vf.reduce((sum, f) => sum + f.rows.filter((r) => isTrue(r[col])).length, 0)
+    );
+    const colors = TIMELINE_SITUATION_COLUMNS.map((_, i) =>
+        situationColor(i, TIMELINE_SITUATION_COLUMNS.length)
+    );
+
+    chart.data.labels = TIMELINE_SITUATION_COLUMNS;
+    chart.data.datasets = [
+        {
+            data: counts,
+            backgroundColor: colors,
+            borderColor: "#1e1e1e",
+            borderWidth: 1,
+        },
+    ];
+    chart.options = options;
+    chart.update();
+}
+
+// ---------------------------------------------------------------------------
+// Correction Interval vs Time: elapsed time since the PREVIOUS correction,
+// sampled at each correction event. correction_id/time/correction_interval
+// are SYSTEM-wide quantities (identical wherever a correction appears at
+// all), but calibration/logger.py now only logs a correction to the
+// bodies whose OWN error also crossed the threshold (see comparer.py's
+// body_triggered_correction) -- so, unlike before, no single loaded body
+// file is guaranteed to contain every correction of its simulation any
+// more. It's still always recoverable, though: the system-wide RMS error
+// can never exceed the single largest body's own error, so every
+// correction is guaranteed to be logged by at least one body. This
+// reconstructs the full per-simulation timeline by taking the union of
+// correction_id rows across every loaded file of that simulation (deduped
+// by correction_id, since the same event may appear in more than one
+// body's file), and draws one line per simulation.
+//
+// Note: this replaces the old "time since last correction" sawtooth. That
+// column is still in the CSV, but now that only correction timestamps are
+// logged, it is trivially 0 on every remaining row (every row IS the
+// moment of a correction) -- correction_interval carries the same
+// information (the gap since the previous correction) without being
+// degenerate.
+// ---------------------------------------------------------------------------
+function renderTimeSinceCorrectionChart() {
+    const options = baseOptions(false, "time", "correction_interval");
+    const chart = getOrCreateChart("chart_time_since_correction", "line", options);
+
+    const repFileBySim = new Map();  // simulationId -> representative file (color/label only)
+    const eventsBySim = new Map();   // simulationId -> Map<correction_id, row>
+    visibleFiles().forEach((f) => {
+        if (!repFileBySim.has(f.simulationId)) repFileBySim.set(f.simulationId, f);
+        let evts = eventsBySim.get(f.simulationId);
+        if (!evts) {
+            evts = new Map();
+            eventsBySim.set(f.simulationId, evts);
+        }
+        f.rows.forEach((r) => {
+            if (isNum(r.correction_id) && r.correction_id > 0 && !evts.has(r.correction_id)) {
+                evts.set(r.correction_id, r);
+            }
+        });
+    });
+
+    chart.data.datasets = Array.from(repFileBySim.entries()).map(([simulationId, f]) => {
+        const data = Array.from(eventsBySim.get(simulationId).values())
+            .filter((r) => isNum(r.time) && isNum(r.correction_interval))
+            .sort((a, b) => a.time - b.time)
+            .map((r) => ({ x: r.time, y: r.correction_interval }));
+        return {
+            label: simulationId,
+            data,
+            borderColor: f.color,
+            backgroundColor: f.color,
+            borderWidth: 1.5,
+            borderDash: [5, 4],
+            pointRadius: 3,
+            pointHoverRadius: 5,
+            tension: 0,
+        };
+    });
+    chart.options = options;
+    chart.update();
+}
+
+// ---------------------------------------------------------------------------
+// Generic scatter charts (SCATTER_CHARTS)
+// ---------------------------------------------------------------------------
+function renderScatterChart(def) {
+    const options = scatterOptions(def.xLog, def.yLog, def.xLabel, def.yLabel);
+    const chart = getOrCreateChart(def.id, "scatter", options);
+
+    chart.data.datasets = visibleFiles().map((f) => {
+        const data = f.rows
+            .map((r) => ({ x: r[def.x], y: r[def.y] }))
+            .filter((p) => isNum(p.x) && isNum(p.y) && (!def.xLog || p.x > 0) && (!def.yLog || p.y > 0));
+        return {
+            label: f.simId,
+            data,
+            borderColor: f.color,
+            backgroundColor: f.color,
+            pointRadius: 2.5,
+            pointHoverRadius: 5,
+            showLine: false,
+        };
+    });
+    chart.options = options;
+    chart.update();
+}
+
+// ---------------------------------------------------------------------------
+// Number of Corrections vs Situation (stacked histogram, one bar group per
+// situation, one stacked segment per visible file).
+// ---------------------------------------------------------------------------
+function renderCorrectionsBySituationChart() {
+    const options = barOptions("situation", "corrections", true);
+    const chart = getOrCreateChart("chart_corrections_by_situation", "bar", options);
+
+    const vf = visibleFiles();
+    chart.data.labels = SITUATION_COLUMNS;
+    chart.data.datasets = vf.map((f) => {
+        const correctionRows = f.rows.filter((r) => isNum(r.error_at_trigger));
+        const counts = SITUATION_COLUMNS.map(
+            (col) => correctionRows.filter((r) => isTrue(r[col])).length
+        );
+        return {
+            label: f.simId,
+            data: counts,
+            backgroundColor: f.color,
+        };
+    });
+    chart.options = options;
+    chart.update();
+}
+
+// ---------------------------------------------------------------------------
+// Correction Interval Distribution (stacked histogram over shared bins).
+//
+// A single correction event can now be logged by more than one body
+// (whichever bodies' own error crossed the threshold -- see comparer.py's
+// body_triggered_correction), so summing correction_interval across every
+// loaded body FILE would double- or triple-count the same event. This
+// dedupes to one correction_interval sample per (simulation, correction_id)
+// first -- same reconstruction as renderTimeSinceCorrectionChart -- and
+// stacks bars per SIMULATION rather than per body file.
+// ---------------------------------------------------------------------------
+function renderCorrectionIntervalHistogram() {
+    const vf = visibleFiles();
+
+    const repFileBySim = new Map();  // simulationId -> representative file (color/label only)
+    const eventsBySim = new Map();   // simulationId -> Map<correction_id, correction_interval>
+    vf.forEach((f) => {
+        if (!repFileBySim.has(f.simulationId)) repFileBySim.set(f.simulationId, f);
+        let evts = eventsBySim.get(f.simulationId);
+        if (!evts) {
+            evts = new Map();
+            eventsBySim.set(f.simulationId, evts);
+        }
+        f.rows.forEach((r) => {
+            if (
+                isNum(r.correction_id) && r.correction_id > 0 &&
+                isNum(r.correction_interval) && r.correction_interval > 0 &&
+                !evts.has(r.correction_id)
+            ) {
+                evts.set(r.correction_id, r.correction_interval);
+            }
+        });
+    });
+
+    const allIntervals = [];
+    eventsBySim.forEach((evts) => evts.forEach((v) => allIntervals.push(v)));
+
+    const options = barOptions("correction_interval bin", "count", true);
+    const chart = getOrCreateChart("chart_correction_interval_hist", "bar", options);
+
+    if (allIntervals.length === 0) {
+        chart.data.labels = [];
+        chart.data.datasets = [];
+        chart.options = options;
+        chart.update();
+        return;
+    }
+
+    const nBins = 12;
+    const minV = Math.min(...allIntervals);
+    const maxV = Math.max(...allIntervals);
+    const span = Math.max(maxV - minV, 1e-12);
+    const binWidth = span / nBins;
+    const binEdges = Array.from({ length: nBins + 1 }, (_, i) => minV + i * binWidth);
+    const labels = Array.from({ length: nBins }, (_, i) =>
+        `${binEdges[i].toPrecision(3)}-${binEdges[i + 1].toPrecision(3)}`
+    );
+
+    function binIndex(v) {
+        if (v <= minV) return 0;
+        if (v >= maxV) return nBins - 1;
+        return Math.min(nBins - 1, Math.floor((v - minV) / binWidth));
+    }
+
+    chart.data.labels = labels;
+    chart.data.datasets = Array.from(eventsBySim.entries()).map(([simulationId, evts]) => {
+        const counts = new Array(nBins).fill(0);
+        evts.forEach((v) => {
+            counts[binIndex(v)] += 1;
+        });
+        return { label: simulationId, data: counts, backgroundColor: repFileBySim.get(simulationId).color };
+    });
+    chart.options = options;
+    chart.update();
+}
+
+// ---------------------------------------------------------------------------
+// Minimum Pairwise Distance with Correction Events Overlay. Since only
+// correction timestamps are logged now, the "line" and the "overlay" are
+// the same underlying points by construction; the line is dashed (a visual
+// guide across gaps, not a continuous trace) and the triangle overlay makes
+// each individual correction event stand out clearly against it.
+// ---------------------------------------------------------------------------
+function renderMinDistanceCorrectionsOverlay() {
+    const options = baseOptions(false, "time", "system_min_distance");
+    const chart = getOrCreateChart("chart_min_distance_corrections_overlay", "line", options);
+
+    const datasets = [];
+    visibleFiles().forEach((f) => {
+        const lineData = f.rows
+            .map((r) => ({ x: r.time, y: r.system_min_distance }))
+            .filter((p) => isNum(p.x) && isNum(p.y));
+        datasets.push({
+            type: "line",
+            label: f.simId,
+            data: lineData,
+            borderColor: f.color,
+            backgroundColor: f.color,
+            borderWidth: 1.5,
+            borderDash: [5, 4],
+            pointRadius: 0,
+            tension: 0,
+        });
+
+        const correctionPoints = f.rows
+            .filter((r) => isNum(r.error_at_trigger) && isNum(r.system_min_distance))
+            .map((r) => ({ x: r.time, y: r.system_min_distance }));
+        if (correctionPoints.length > 0) {
+            datasets.push({
+                type: "scatter",
+                label: `${f.simId} corrections`,
+                data: correctionPoints,
+                borderColor: "#ffffff",
+                backgroundColor: f.color,
+                pointStyle: "triangle",
+                pointRadius: 6,
+                pointHoverRadius: 8,
+                showLine: false,
+            });
+        }
+    });
+
+    chart.data.datasets = datasets;
+    chart.options = options;
+    chart.update();
+}
+
+// ---------------------------------------------------------------------------
+// Error Growth Between Corrections (Normalized by Correction Interval).
+// ---------------------------------------------------------------------------
+function renderErrorGrowthNormalizedChart() {
+    const options = baseOptions(true, "time", "error_at_trigger / correction_interval");
+    const chart = getOrCreateChart("chart_error_growth_normalized", "scatter", options);
+
+    chart.data.datasets = visibleFiles().map((f) => {
+        const data = f.rows
+            .filter(
+                (r) =>
+                    isNum(r.error_at_trigger) &&
+                    isNum(r.correction_interval) &&
+                    r.correction_interval > 0
+            )
+            .map((r) => ({ x: r.time, y: r.error_at_trigger / r.correction_interval }));
+        return {
+            label: f.simId,
+            data,
+            borderColor: f.color,
+            backgroundColor: f.color,
+            pointRadius: 5,
+            pointHoverRadius: 7,
+            showLine: false,
+        };
+    });
+    chart.options = options;
+    chart.update();
+}
+
+// ---------------------------------------------------------------------------
+// Per-file aggregate scatter charts: {energy_drift, angular_momentum_drift}
+// vs number of corrections. One point per loaded file.
+// ---------------------------------------------------------------------------
+function renderAggregateVsCorrectionsChart(canvasId, column, yLabel) {
+    const options = scatterOptions(false, false, "number of corrections", yLabel);
+    options.plugins.tooltip = {
+        callbacks: {
+            label: (ctx) => `${ctx.raw.label}: (${ctx.raw.x}, ${ctx.raw.y.toExponential(3)})`,
+        },
+    };
+    const chart = getOrCreateChart(canvasId, "scatter", options);
+
+    // energy_drift and angular_momentum_drift are still system-wide
+    // quantities at any given timestamp, but calibration/logger.py now
+    // only logs a correction to the bodies whose OWN error also crossed
+    // the threshold (see comparer.py's body_triggered_correction), so
+    // each loaded body file now samples a different, body-specific subset
+    // of correction timestamps -- and nCorrections (this body's own
+    // correction count) legitimately differs per body too. So one point
+    // per loaded body FILE is meaningful again here (no forced overlap to
+    // dedupe, unlike before this change).
+    const vf = visibleFiles();
+    const points = vf
+        .map((f) => {
+            const vals = f.rows.map((r) => r[column]).filter(isNum);
+            if (vals.length === 0) return null;
+            const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+            return { x: f.nCorrections, y: mean, label: f.simId, color: f.color };
+        })
+        .filter((p) => p !== null);
+
+    chart.data.datasets = [
+        {
+            label: yLabel,
+            data: points,
+            backgroundColor: points.map((p) => p.color),
+            borderColor: points.map((p) => p.color),
+            pointRadius: 6,
+            pointHoverRadius: 8,
+            showLine: false,
+        },
+    ];
+    chart.options = options;
+    chart.update();
+}
+
+// ---------------------------------------------------------------------------
+// Accuracy vs Computational Cost Pareto curve.
+// See the card's .desc text for what each series does and does not represent.
+//
+// Only correction timestamps are logged now, so there are no more dense
+// "pre-first-correction" or steady-state samples to average over:
+//   - "Hybrid Scheduler" uses body_position_error_at_trigger (this body's
+//     own pre-correction error at each correction event), since
+//     position_error on a logged row is taken AFTER the snap-to-reference
+//     and would be ~0 regardless of how bad Leapfrog actually got.
+//   - "Leapfrog" (the zero-correction proxy) can no longer average many
+//     pre-correction samples either, since none remain in the file. Instead
+//     it uses body_position_error_at_trigger from just the FIRST correction
+//     of each run: the error that accumulated with no corrections applied
+//     yet, which is the one uncorrected-Leapfrog data point still available.
+// ---------------------------------------------------------------------------
+function renderParetoChart() {
+    const options = scatterOptions(false, true, "cost proxy", "mean body_position_error_at_trigger");
+    options.plugins.tooltip = {
+        callbacks: {
+            label: (ctx) => `${ctx.dataset.label}: ${ctx.raw.label || ""} (${ctx.raw.x}, ${ctx.raw.y.toExponential(3)})`,
+        },
+    };
+    const chart = getOrCreateChart("chart_pareto", "scatter", options);
+
+    const vf = visibleFiles();
+
+    const hybridPoints = vf
+        .map((f) => {
+            const vals = f.rows.map((r) => r.body_position_error_at_trigger).filter(isNum);
+            if (vals.length === 0) return null;
+            const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+            return { x: f.nCorrections, y: Math.max(mean, 1e-300), label: f.simId };
+        })
+        .filter((p) => p !== null);
+
+    const leapfrogPoints = vf
+        .map((f) => {
+            const sorted = f.rows.filter((r) => isNum(r.correction_id)).sort((a, b) => a.correction_id - b.correction_id);
+            const firstCorrection = sorted.find((r) => isNum(r.body_position_error_at_trigger));
+            if (!firstCorrection) return null;
+            return { x: 0, y: Math.max(firstCorrection.body_position_error_at_trigger, 1e-300), label: f.simId };
+        })
+        .filter((p) => p !== null);
+
+    const maxCost = Math.max(1, ...hybridPoints.map((p) => p.x));
+    const ias15Points =
+        vf.length > 0
+            ? [{ x: maxCost * 1.15, y: 1e-13, label: "IAS15 reference (illustrative anchor)" }]
+            : [];
+
+    chart.data.datasets = [
+        {
+            label: "Leapfrog (error at first correction, zero-correction proxy)",
+            data: leapfrogPoints,
+            backgroundColor: "#f67019",
+            borderColor: "#f67019",
+            pointRadius: 6,
+            pointStyle: "rectRot",
+            showLine: false,
+        },
+        {
+            label: "Hybrid Scheduler",
+            data: hybridPoints,
+            backgroundColor: "#4dc9f6",
+            borderColor: "#4dc9f6",
+            pointRadius: 6,
+            pointStyle: "circle",
+            showLine: false,
+        },
+        {
+            label: "IAS15 (reference)",
+            data: ias15Points,
+            backgroundColor: "#00a950",
+            borderColor: "#00a950",
+            pointRadius: 8,
+            pointStyle: "star",
+            showLine: false,
+        },
+    ];
+    chart.options = options;
+    chart.update();
+}
+
+// ---------------------------------------------------------------------------
+// Render everything.
+// ---------------------------------------------------------------------------
+function renderAllCharts() {
+    LINE_CHARTS.forEach(renderLineChart);
+    renderCorrectionChart();
+    renderSituationTimelineChart();
+    renderTimeSinceCorrectionChart();
+    SCATTER_CHARTS.forEach(renderScatterChart);
+    renderSituationsPieChart();
+    renderCorrectionsBySituationChart();
+    renderCorrectionIntervalHistogram();
+    renderMinDistanceCorrectionsOverlay();
+    renderErrorGrowthNormalizedChart();
+    renderAggregateVsCorrectionsChart("chart_energy_drift_vs_corrections", "energy_drift", "mean energy_drift");
+    renderAggregateVsCorrectionsChart(
+        "chart_angular_momentum_drift_vs_corrections",
+        "angular_momentum_drift",
+        "mean angular_momentum_drift"
+    );
+    renderParetoChart();
+}
+
+renderFileList();
+renderAllCharts();
+</script>
+</body>
+</html>

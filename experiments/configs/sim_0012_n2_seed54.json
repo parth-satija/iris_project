@@ -7,6 +7,7 @@
   "dt": 0.001,
   "total_time": 5.0,
   "sample_interval": 0.05,
+  "correction_threshold": 0.01,
   "masses": [
     13.066448371915019,
     5.42650972338806

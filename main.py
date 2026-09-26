@@ -109,15 +109,19 @@ def make_validation_plot(csv_dir: str, figures_dir: str) -> str | None:
     if not csv_files:
         return None
 
+    # Each CSV is now a single BODY's log (see calibration/logger.py), named
+    # "<simulation_id>_body<NN>.csv". Use the first one found as a sanity check.
     df = pd.read_csv(csv_files[0])
     sim_id = df["simulation_id"].iloc[0]
+    body_name = df["body_name"].iloc[0] if "body_name" in df.columns else "body"
+    file_stem = os.path.splitext(os.path.basename(csv_files[0]))[0]
 
     os.makedirs(figures_dir, exist_ok=True)
     fig, axes = plt.subplots(2, 1, figsize=(8, 6), sharex=True)
 
     axes[0].plot(df["time"], df["position_error"])
     axes[0].set_ylabel("Position error")
-    axes[0].set_title(f"Leapfrog vs IAS15 calibration: {sim_id}")
+    axes[0].set_title(f"Leapfrog vs IAS15 calibration: {sim_id} ({body_name})")
     axes[0].set_yscale("log")
 
     axes[1].plot(df["time"], df["energy_drift"])
@@ -125,7 +129,7 @@ def make_validation_plot(csv_dir: str, figures_dir: str) -> str | None:
     axes[1].set_xlabel("Time")
 
     fig.tight_layout()
-    out_path = os.path.join(figures_dir, f"{sim_id}_validation.png")
+    out_path = os.path.join(figures_dir, f"{file_stem}_validation.png")
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
     return out_path

@@ -79,6 +79,16 @@ class CorrectionEvent:
             Leapfrog state was reset to.
         corrected_velocities: shape-(N, 3) copy of the IAS15 velocities
             the Leapfrog state was reset to.
+        pre_correction_positions: shape-(N, 3) copy of the Leapfrog
+            positions immediately BEFORE the snap-to-reference, i.e. the
+            erroneous state that actually triggered this correction. This
+            is what lets downstream analysis compute each body's own
+            contribution to the trigger (`corrected_positions -
+            pre_correction_positions`, per body), since `error_at_trigger`
+            itself is a single system-wide RMS value and is identical for
+            every body.
+        pre_correction_velocities: shape-(N, 3) copy of the Leapfrog
+            velocities immediately BEFORE the snap-to-reference.
     """
 
     correction_id: int
@@ -91,6 +101,8 @@ class CorrectionEvent:
     correction_interval: float
     corrected_positions: np.ndarray
     corrected_velocities: np.ndarray
+    pre_correction_positions: np.ndarray
+    pre_correction_velocities: np.ndarray
 
 
 def run_leapfrog(
@@ -325,6 +337,8 @@ def run_leapfrog_with_correction(
                         correction_interval=time_since_last,
                         corrected_positions=reference_positions[sample_idx].copy(),
                         corrected_velocities=reference_velocities[sample_idx].copy(),
+                        pre_correction_positions=positions.copy(),
+                        pre_correction_velocities=velocities.copy(),
                     )
                 )
 
