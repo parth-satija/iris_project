@@ -24,3 +24,7 @@ Specifically, the most r
 [2026-09-26 14:42] Action completed: The seed folders with the highest amount of data in `D:\iris_calibration\outputs\csv` (sorted by total file size in KBs) are:
 
 1. **`seed_221`** — 1,1
+[2026-09-27 19:17] Action completed: I have successfully organized all the CSV files in `D:\iris_calibration\outputs\csv` into their respective seed folders based on the seed numbers extr
+[2026-09-27 20:31] Action completed: That structure changes the equation significantly. Structuring the deal as an **IP/Tech Transfer fee ($50K–$150K upfront) combined with an ongoing con
+[2026-09-27 20:33] Action completed: To target companies that would realistically acquire a full-stack agentic runtime like Midum (featuring local OS control, Chrome DevTools Protocol bro
+[2026-09-27 21:17] Action completed: I see you dismissed the solution widget. Is there anything else you need help with regarding your project, the deal structure, or further analysis? Le

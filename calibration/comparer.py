@@ -28,6 +28,35 @@ Every row carries:
     error also crossed the threshold that caused the correction, which
     is what calibration/logger.py uses to decide whether a given body's
     file actually gets a row for that event -- see its module docstring)
+  - this body's TRUE pre-correction dynamical state on a correction row
+    (`pre_correction_acceleration`, `pre_correction_jerk`,
+    `pre_correction_nearest_neighbor_distance`,
+    `pre_correction_relative_velocity`): unlike this row's own
+    `acceleration`/`jerk`/`nearest_neighbor_distance`/`relative_velocity`
+    columns (computed by calibration/events.py from the sampled
+    trajectory, which has ALREADY been snapped to the IAS15 reference by
+    the time this row exists), these four are read straight off
+    `CorrectionEvent.pre_correction_positions/velocities/acceleration/
+    jerk` -- the actual erroneous state that triggered the correction,
+    one internal integrator step before the snap. This is the intended
+    input for fitting a real-time safety/accuracy index, since a
+    predictor can never see the post-snap state before deciding whether
+    to trust Leapfrog. Populated for EVERY row, not just corrections:
+    on a non-correction row they describe the same pre-check quantities
+    at that sample (the names keep the `pre_correction_` prefix for
+    compatibility with existing CSVs and analysis scripts).
+  - which kind of sample the row is (`sample_role`: correction,
+    negative_pre_failure, negative_hard, negative_baseline; see the
+    sampling policy at the top of this module and
+    calibration/logger.py), `sampling_weight` (roughly how many real
+    samples the row stands for), and `system_position_error_pre_check`
+    (system RMS error at the pre-check state -- a label-side quantity for
+    severity analysis, NOT something a real-time predictor could know).
+  - NOTE: every state-derived column (position_error, velocity_error,
+    energy drift, acceleration, jerk, nearest-neighbor info, and all
+    situational flags) is computed from the PRE-CHECK Leapfrog state, so
+    correction rows show the state that failed rather than the
+    snapped-to-IAS15 state that replaced it.
   - every situational-event flag from calibration/events.py that is
     either intrinsically per-body, or a per-body "involved_in_*"
     projection of a system-wide situation (closest-pair switch,
@@ -44,8 +73,110 @@ import pandas as pd
 from calibration.events import compute_body_events
 from calibration.generator import ExperimentConfig
 from core.leapfrog import CorrectionEvent, Trajectory
-from core.metrics import angular_momentum_drift, energy_drift, mass_ratio
+from core.metrics import (
+    angular_momentum_drift,
+    energy_drift,
+    mass_ratio,
+    nearest_neighbor_per_body,
+    position_error,
+)
 from core.physics import compute_angular_momentum, compute_total_energy
+
+# ---------------------------------------------------------------------------
+# Negative-example sampling policy (which non-correction samples get logged)
+# ---------------------------------------------------------------------------
+# Logging every sample is too much storage, but logging ONLY corrections
+# leaves a safety-index model with no examples of "Leapfrog was fine", so it
+# can rank how bad failures were but can never learn where safe ends and
+# unsafe begins. Each sampled timestep therefore gets a `sample_role`:
+#
+#   "correction"            a correction fired (positive example)
+#   "negative_pre_failure"  one of the PRE_FAILURE_SAMPLES samples right
+#                           before a correction: the last states that
+#                           still looked fine, i.e. the hardest negatives
+#   "negative_hard"         a near-miss (system RMS error >= NEAR_MISS_FRACTION
+#                           * correction_threshold), thinned to every
+#                           NEG_HARD_STRIDE-th such sample; OR a risky-
+#                           looking moment (close encounter / rapid approach
+#                           / high relative-velocity encounter / near
+#                           collision) that is NOT a near-miss, thinned much
+#                           harder (every NEG_RISKY_STRIDE-th) because in
+#                           crowded systems almost every sample looks risky
+#                           and would otherwise swamp the log. These teach a
+#                           model that "looks risky" is not the same as
+#                           "will fail".
+#   "negative_baseline"     every NEG_BASELINE_STRIDE-th sample regardless of
+#                           what is happening: an unbiased view of normal
+#                           operation
+#   ""                      not logged
+#
+# Priority when a sample qualifies for several: correction > pre_failure >
+# hard > baseline. `sampling_weight` approximates how many real samples a
+# logged row stands for (1 for correction/pre_failure, the stride for hard
+# and baseline), so analysis can undo the deliberate over-representation of
+# hard negatives when it needs honest base rates.
+NEG_BASELINE_STRIDE: int = 20
+NEG_HARD_STRIDE: int = 8
+NEG_RISKY_STRIDE: int = 10
+NEAR_MISS_FRACTION: float = 0.5
+PRE_FAILURE_SAMPLES: int = 2
+
+
+def _assign_sample_roles(
+    n_samples: int,
+    system_error: np.ndarray,
+    correction_threshold: float,
+    correction_sample_indices: set[int],
+    risky_moment: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Decide, for every sample index, whether and why it gets logged (see the
+    sampling-policy comment above).
+
+    Args:
+        n_samples: Number of samples in the trajectory.
+        system_error: shape-(T,) system RMS position error at each sample's
+            pre-check state.
+        correction_threshold: The experiment's correction threshold.
+        correction_sample_indices: Sample indices where a correction fired.
+        risky_moment: shape-(T,) bool, True where any body shows a
+            risky-looking situational flag.
+
+    Returns:
+        (roles, weights): shape-(T,) object array of role strings ("" =
+        not logged) and shape-(T,) float array of sampling weights.
+    """
+    roles = np.full(n_samples, "", dtype=object)
+    weights = np.zeros(n_samples, dtype=float)
+
+    pre_failure: set[int] = set()
+    for c in correction_sample_indices:
+        for k in range(1, PRE_FAILURE_SAMPLES + 1):
+            if c - k >= 1:
+                pre_failure.add(c - k)
+
+    near_miss_counter = 0
+    risky_counter = 0
+    for idx in range(1, n_samples):  # sample 0 has no dynamical history
+        if idx in correction_sample_indices:
+            roles[idx], weights[idx] = "correction", 1.0
+            continue
+        if idx in pre_failure:
+            roles[idx], weights[idx] = "negative_pre_failure", 1.0
+            continue
+        if system_error[idx] >= NEAR_MISS_FRACTION * correction_threshold:
+            near_miss_counter += 1
+            if near_miss_counter % NEG_HARD_STRIDE == 0:
+                roles[idx], weights[idx] = "negative_hard", float(NEG_HARD_STRIDE)
+                continue
+        elif risky_moment[idx]:
+            risky_counter += 1
+            if risky_counter % NEG_RISKY_STRIDE == 0:
+                roles[idx], weights[idx] = "negative_hard", float(NEG_RISKY_STRIDE)
+                continue
+        if idx % NEG_BASELINE_STRIDE == 0:
+            roles[idx], weights[idx] = "negative_baseline", float(NEG_BASELINE_STRIDE)
+    return roles, weights
 
 
 def compare_trajectories(
@@ -111,13 +242,70 @@ def compare_trajectories(
 
     # Per-body / per-system situational event detection over the WHOLE
     # trajectory at once (see calibration/events.py).
+    #
+    # Everything state-derived below (events/flags, position_error,
+    # energy drift, nearest-neighbor geometry, ...) is computed from the
+    # PRE-CHECK state -- the raw Leapfrog state before any snap-to-reference
+    # -- not from `leapfrog_traj.positions`, which at correction samples
+    # holds the already-snapped IAS15 state. Otherwise a correction row's
+    # position_error would read ~0 and its finite-difference jerk/flags
+    # would be polluted by the snap discontinuity, which would both hide
+    # the real state that failed AND hand a classifier a spurious "snap
+    # artifact" cue for telling corrections from non-corrections.
+    # (Plain run_leapfrog trajectories carry no pre-check arrays and are
+    # never snapped, so `positions` is already the raw state there.)
+    lf_positions = (
+        leapfrog_traj.pre_check_positions
+        if leapfrog_traj.pre_check_positions is not None
+        else leapfrog_traj.positions
+    )
+    lf_velocities = (
+        leapfrog_traj.pre_check_velocities
+        if leapfrog_traj.pre_check_velocities is not None
+        else leapfrog_traj.velocities
+    )
+
     events = compute_body_events(
         times=times,
-        positions=leapfrog_traj.positions,
-        velocities=leapfrog_traj.velocities,
+        positions=lf_positions,
+        velocities=lf_velocities,
         masses=masses,
         g=g,
         softening=softening,
+    )
+
+    # Per-sample, per-body pre-check acceleration/jerk magnitudes at the
+    # integrator's own dt resolution. Trajectories from run_leapfrog_with_
+    # correction carry these for every sample; for any other trajectory,
+    # fall back to the correction events' copies (correction samples only)
+    # and NaN elsewhere.
+    if leapfrog_traj.pre_check_acceleration is not None and leapfrog_traj.pre_check_jerk is not None:
+        pre_accel_mag = np.linalg.norm(leapfrog_traj.pre_check_acceleration, axis=-1)
+        pre_jerk_mag = np.linalg.norm(leapfrog_traj.pre_check_jerk, axis=-1)
+    else:
+        pre_accel_mag = np.full((n_samples, n_bodies), np.nan)
+        pre_jerk_mag = np.full((n_samples, n_bodies), np.nan)
+        for c_idx, c_event in corrections_by_sample_idx.items():
+            pre_accel_mag[c_idx] = np.linalg.norm(c_event.pre_correction_acceleration, axis=-1)
+            pre_jerk_mag[c_idx] = np.linalg.norm(c_event.pre_correction_jerk, axis=-1)
+
+    # Which samples get logged, and why (see the sampling-policy comment at
+    # the top of this module).
+    system_error = np.array(
+        [position_error(lf_positions[i], ias15_traj.positions[i]) for i in range(n_samples)]
+    )
+    risky_moment = (
+        events.close_encounter
+        | events.rapid_approach
+        | events.high_relative_velocity_encounter
+        | events.near_collision
+    ).any(axis=1)
+    sample_roles, sample_weights = _assign_sample_roles(
+        n_samples,
+        system_error,
+        config.correction_threshold,
+        set(corrections_by_sample_idx.keys()),
+        risky_moment,
     )
 
     # Running correction-tracking state (system-wide: a correction resets
@@ -128,8 +316,8 @@ def compare_trajectories(
 
     rows: list[dict] = []
     for idx in range(n_samples):
-        lf_pos = leapfrog_traj.positions[idx]
-        lf_vel = leapfrog_traj.velocities[idx]
+        lf_pos = lf_positions[idx]
+        lf_vel = lf_velocities[idx]
         ref_pos = ias15_traj.positions[idx]
         ref_vel = ias15_traj.velocities[idx]
 
@@ -195,6 +383,20 @@ def compare_trajectories(
             body_velocity_error_at_trigger_arr = np.full(n_bodies, np.nan)
             body_triggered_correction_arr = np.zeros(n_bodies, dtype=bool)
 
+        # Pre-check nearest-neighbor geometry at this sample's raw (pre-snap)
+        # state. Together with pre_accel_mag / pre_jerk_mag (precomputed
+        # above from the integrator's own per-step values) these are the
+        # four inputs a real-time safety index would have had, computed the
+        # SAME way for correction and non-correction samples so a model
+        # fit on them cannot key on how the row was produced.
+        (
+            pre_nn_distance_arr,
+            pre_nn_relative_velocity_arr,
+            _pre_nn_id_arr,
+        ) = nearest_neighbor_per_body(lf_pos, lf_vel)
+        pre_accel_mag_arr = pre_accel_mag[idx]
+        pre_jerk_mag_arr = pre_jerk_mag[idx]
+
         sys_i = int(events.system_min_distance_pair_i[idx])
         sys_j = int(events.system_min_distance_pair_j[idx])
 
@@ -249,6 +451,18 @@ def compare_trajectories(
                     "body_triggered_correction": bool(
                         body_triggered_correction_arr[body_id]
                     ),
+                    "pre_correction_acceleration": float(pre_accel_mag_arr[body_id]),
+                    "pre_correction_jerk": float(pre_jerk_mag_arr[body_id]),
+                    "pre_correction_nearest_neighbor_distance": float(
+                        pre_nn_distance_arr[body_id]
+                    ),
+                    "pre_correction_relative_velocity": float(
+                        pre_nn_relative_velocity_arr[body_id]
+                    ),
+                    # --- sample selection (see module-level sampling policy) ---
+                    "system_position_error_pre_check": float(system_error[idx]),
+                    "sample_role": str(sample_roles[idx]),
+                    "sampling_weight": float(sample_weights[idx]),
                     # --- situational events: per-body ---
                     "strong_acceleration": bool(events.strong_acceleration[idx, body_id]),
                     "high_jerk": bool(events.high_jerk[idx, body_id]),

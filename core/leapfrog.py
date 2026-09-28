@@ -37,12 +37,36 @@ class Trajectory:
         positions: shape-(T, N, 3) float64 array of positions at each sample time.
         velocities: shape-(T, N, 3) float64 array of velocities at each sample time.
         masses: shape-(N,) float64 array of body masses (constant over time).
+        pre_check_positions: Optional shape-(T, N, 3) array of positions at
+            each sample BEFORE any snap-to-reference correction was applied
+            at that sample. Identical to `positions` except at samples
+            where run_leapfrog_with_correction fired a correction (there,
+            `positions` holds the snapped IAS15 state while this holds the
+            raw, erroneous Leapfrog state that triggered it). None for
+            plain `run_leapfrog` runs.
+        pre_check_velocities: Same as `pre_check_positions`, for velocities.
+        pre_check_acceleration: Optional shape-(T, N, 3) array of the
+            per-body acceleration a(t) Leapfrog had computed at each
+            sample's pre-check state. Row 0 is a(0).
+        pre_check_jerk: Optional shape-(T, N, 3) finite-difference jerk at
+            the integrator's own internal `dt` resolution,
+            `(a(t) - a(t - dt)) / dt`, at each sample's pre-check state.
+            Row 0 is NaN (no previous step exists).
+
+        The four `pre_check_*` arrays exist so downstream analysis can see
+        the state a real-time safety index would actually have had at
+        EVERY sample (correction or not), rather than only at the moments
+        a correction happened to fire.
     """
 
     times: np.ndarray
     positions: np.ndarray
     velocities: np.ndarray
     masses: np.ndarray
+    pre_check_positions: np.ndarray | None = None
+    pre_check_velocities: np.ndarray | None = None
+    pre_check_acceleration: np.ndarray | None = None
+    pre_check_jerk: np.ndarray | None = None
 
 
 @dataclass
@@ -89,6 +113,24 @@ class CorrectionEvent:
             every body.
         pre_correction_velocities: shape-(N, 3) copy of the Leapfrog
             velocities immediately BEFORE the snap-to-reference.
+        pre_correction_acceleration: shape-(N, 3) copy of the per-body
+            gravitational acceleration a(t) evaluated at
+            `pre_correction_positions`, i.e. the LAST acceleration Leapfrog
+            actually computed before the snap. Unlike the acceleration
+            columns produced by calibration/events.py from the (already
+            corrected) sampled trajectory, this is the true pre-correction
+            dynamical state -- what a safety-index predictor would have had
+            available in real time, one internal integrator step before
+            the correction fired.
+        pre_correction_jerk: shape-(N, 3) finite-difference estimate of
+            jerk, `(pre_correction_acceleration - a(t - dt)) / dt`, taken
+            at the same internal `dt` step resolution used by the
+            Velocity Verlet loop itself (finer-grained and free of the
+            sample-interval spacing that calibration/events.py's jerk
+            column uses). Together with `pre_correction_acceleration`,
+            this is intended to let a safety-index/accuracy-index model be
+            fit against the true state that preceded a correction, rather
+            than the post-snap state visible everywhere else in the CSV.
     """
 
     correction_id: int
@@ -103,6 +145,8 @@ class CorrectionEvent:
     corrected_velocities: np.ndarray
     pre_correction_positions: np.ndarray
     pre_correction_velocities: np.ndarray
+    pre_correction_acceleration: np.ndarray
+    pre_correction_jerk: np.ndarray
 
 
 def run_leapfrog(
@@ -297,10 +341,26 @@ def run_leapfrog_with_correction(
     # Initial acceleration, reused as a(t) for the first half-kick.
     acc = compute_accelerations(positions, masses, g=g, softening=softening)
 
+    # Raw (pre-snap) state at every sample, kept in parallel with the
+    # returned (possibly snapped) trajectory -- see Trajectory's
+    # `pre_check_*` docstring. Sample 0 has no previous step, so its jerk
+    # is NaN.
+    pre_check_positions_out = [positions.copy()]
+    pre_check_velocities_out = [velocities.copy()]
+    pre_check_acceleration_out = [acc.copy()]
+    pre_check_jerk_out = [np.full_like(positions, np.nan)]
+
     sample_idx = 0  # index 0 corresponds to t = 0.0, already recorded above
 
     current_time = 0.0
     for step in range(1, n_steps + 1):
+        # Acceleration entering this step, a(t) -- kept under its own name
+        # (rather than relying on `acc` post-reassignment below) so that,
+        # if a correction fires this step, we can still report the true
+        # pre-correction jerk as a finite difference at the integrator's
+        # own internal dt resolution: (a(t+dt) - a(t)) / dt.
+        acc_before_step = acc
+
         # Position update: x(t+dt) = x(t) + v(t)*dt + 0.5*a(t)*dt^2
         positions = positions + velocities * dt + 0.5 * acc * dt * dt
 
@@ -321,9 +381,26 @@ def run_leapfrog_with_correction(
             ref_pos = reference_positions[sample_idx]
             error = position_error(positions, ref_pos)
 
+            # True pre-check dynamical state at this sample, captured
+            # BEFORE any snap-to-reference below can overwrite
+            # positions/velocities. `acc` was reassigned to new_acc just
+            # above, so it equals a(t) at exactly these positions.
+            # Recorded for EVERY sample, not just corrections, so
+            # downstream analysis gets comparable features for both the
+            # steps that failed and the steps that didn't.
+            pre_check_acceleration = acc.copy()
+            pre_check_jerk = (acc - acc_before_step) / dt
+            pre_check_positions_out.append(positions.copy())
+            pre_check_velocities_out.append(velocities.copy())
+            pre_check_acceleration_out.append(pre_check_acceleration)
+            pre_check_jerk_out.append(pre_check_jerk)
+
             if error > error_threshold:
                 steps_since_last = step - last_correction_step
                 time_since_last = current_time - last_correction_time
+
+                pre_correction_acceleration = pre_check_acceleration
+                pre_correction_jerk = pre_check_jerk
 
                 corrections.append(
                     CorrectionEvent(
@@ -339,6 +416,8 @@ def run_leapfrog_with_correction(
                         corrected_velocities=reference_velocities[sample_idx].copy(),
                         pre_correction_positions=positions.copy(),
                         pre_correction_velocities=velocities.copy(),
+                        pre_correction_acceleration=pre_correction_acceleration,
+                        pre_correction_jerk=pre_correction_jerk,
                     )
                 )
 
@@ -363,5 +442,9 @@ def run_leapfrog_with_correction(
         positions=np.array(positions_out, dtype=np.float64),
         velocities=np.array(velocities_out, dtype=np.float64),
         masses=masses,
+        pre_check_positions=np.array(pre_check_positions_out, dtype=np.float64),
+        pre_check_velocities=np.array(pre_check_velocities_out, dtype=np.float64),
+        pre_check_acceleration=np.array(pre_check_acceleration_out, dtype=np.float64),
+        pre_check_jerk=np.array(pre_check_jerk_out, dtype=np.float64),
     )
     return trajectory, corrections

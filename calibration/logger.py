@@ -7,14 +7,17 @@ files under outputs/csv/, with a fixed, validated column schema.
 
 Logs are generated PER BODY, not per system: each experiment now writes
 one CSV file per body (`<simulation_id>_body<NN>.csv`) instead of a
-single system-wide CSV. Each file only contains rows for timesteps where
+single system-wide CSV. Each file contains (a) rows for timesteps where
 an online correction fired AND this body was one of the bodies that
 actually triggered it -- i.e. its own error also crossed
 `correction_threshold`, not merely the system-wide RMS error (see
 save_calibration_csv and calibration/comparer.py's
-`body_triggered_correction` column) -- together with that body's own
+`body_triggered_correction` column) -- and (b) a thinned sample of
+NEGATIVE examples (steps where Leapfrog did not need a correction), each
+tagged by `sample_role`, so a safety index can be fit against both sides
+of the decision. Each row carries that body's own
 metrics/situational-event flags and the relevant system-wide context
-columns broadcast onto its rows, so each file is self-contained. A
+columns broadcast onto it, so each file is self-contained. A
 correction still resets every body's state at once, but a body whose own
 deviation never got large enough to matter no longer gets a row logged
 for an event it wasn't actually part of.
@@ -68,6 +71,14 @@ REQUIRED_COLUMNS: tuple[str, ...] = (
     "body_position_error_at_trigger",
     "body_velocity_error_at_trigger",
     "body_triggered_correction",
+    "pre_correction_acceleration",
+    "pre_correction_jerk",
+    "pre_correction_nearest_neighbor_distance",
+    "pre_correction_relative_velocity",
+    # sample selection: why this row was logged (see calibration/comparer.py)
+    "system_position_error_pre_check",
+    "sample_role",
+    "sampling_weight",
     # situational events: per-body
     "strong_acceleration",
     "high_jerk",
@@ -157,6 +168,10 @@ SITUATION_LOG_CONTEXT_COLUMNS: tuple[str, ...] = (
     "system_min_distance",
     "system_min_distance_pair",
     "temporary_capture_partner_id",
+    "pre_correction_acceleration",
+    "pre_correction_jerk",
+    "pre_correction_nearest_neighbor_distance",
+    "pre_correction_relative_velocity",
 )
 
 SITUATION_LOG_COLUMNS: tuple[str, ...] = (
@@ -191,24 +206,30 @@ def save_calibration_csv(df: pd.DataFrame, csv_dir: str, simulation_id: str) -> 
     rather than a single per-system file, enforcing the required column
     schema and order on each file.
 
-    Only rows where an online correction fired AND this body was one of
-    the bodies that actually triggered it are written -- i.e. rows where
-    `error_at_trigger` is not NaN AND `body_triggered_correction` is True.
-    A correction resets every body's state simultaneously (see
-    core.leapfrog.run_leapfrog_with_correction), but the system-wide RMS
-    error crossing `correction_threshold` does not mean every individual
-    body's own error did too; `body_triggered_correction` (computed in
-    calibration/comparer.py) is True only for the bodies whose own error
-    also crossed the threshold. This keeps each body's log limited to
-    corrections it was actually responsible for, rather than every
-    system-wide correction regardless of whether this body needed it.
-    (At least one body triggers every correction, since the RMS can never
-    exceed the largest individual contribution -- so no correction event
-    is dropped entirely, it is just attributed to the body/bodies that
-    actually earned it.) Every other sampled timestep is dropped before
-    writing, so each output file is a sparse log of this body's own
-    correction events (with its full metric snapshot at each one) rather
-    than a dense per-timestep time series.
+    Only rows chosen by calibration/comparer.py's sampling policy are
+    written (everything else is dropped to keep files small):
+
+      * POSITIVES -- `sample_role == "correction"` rows where this body
+        was one of the bodies that actually triggered the correction
+        (`body_triggered_correction` is True). A correction resets every
+        body's state simultaneously (see
+        core.leapfrog.run_leapfrog_with_correction), but the system-wide
+        RMS error crossing `correction_threshold` does not mean every
+        individual body's own error did too. (At least one body triggers
+        every correction, since the RMS can never exceed the largest
+        individual contribution, so no correction is dropped entirely.)
+      * NEGATIVES -- a deliberately thinned sample of steps where no
+        correction fired: `negative_pre_failure` (the last samples
+        before each correction), `negative_hard` (near-misses and
+        risky-looking moments, thinned), and `negative_baseline` (every
+        20th sample). Written for every body. Without these a safety
+        index can only be fit to "how bad were the failures", never to
+        "where is the boundary between safe and unsafe". Use
+        `sampling_weight` to undo the deliberate over-representation of
+        hard negatives when honest base rates matter.
+
+    Every other sampled timestep is dropped before writing, so each
+    output file is a sparse log rather than a dense per-timestep series.
 
     Args:
         df: Long-format DataFrame produced by
@@ -236,11 +257,17 @@ def save_calibration_csv(df: pd.DataFrame, csv_dir: str, simulation_id: str) -> 
 
     os.makedirs(csv_dir, exist_ok=True)
 
-    # Keep only rows where a correction actually fired at that timestep
-    # AND this body was one of the bodies that actually triggered it (its
-    # own error also crossed correction_threshold, not just the system-wide
-    # RMS) -- see this function's docstring for why.
-    out_df = df[df["error_at_trigger"].notna() & df["body_triggered_correction"]].copy()
+    # Keep (a) correction rows for the bodies that actually triggered the
+    # correction (their own error also crossed correction_threshold, not
+    # just the system-wide RMS) and (b) the sampled negative examples
+    # chosen by calibration/comparer.py's sampling policy, for EVERY body
+    # ("Leapfrog was fine here" is true for all of them). Bodies that did
+    # not own a correction are dropped from that correction's row: the
+    # system failed, but nothing says this body would have, so labelling
+    # it either way would add noise. See this function's docstring.
+    is_correction = (df["sample_role"] == "correction") & df["body_triggered_correction"]
+    is_negative = df["sample_role"].astype(str).str.startswith("negative")
+    out_df = df[is_correction | is_negative].copy()
 
     # Normalize boolean columns to 0/1 before writing (see BOOLEAN_COLUMNS'
     # docstring for why: avoids a True/"True" capitalization mismatch with

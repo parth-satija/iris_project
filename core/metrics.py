@@ -191,6 +191,46 @@ def angular_momentum_drift(current_l: np.ndarray, initial_l: np.ndarray) -> floa
     return (mag_current - mag_initial) / abs(mag_initial)
 
 
+def nearest_neighbor_per_body(
+    positions: np.ndarray, velocities: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Compute, for every body at a single timestep, the distance to its
+    nearest other body and the relative velocity magnitude to that same
+    neighbor. Same underlying pairwise-distance logic as
+    calibration/events.py's per-trajectory nearest-neighbor computation,
+    but for a single (positions, velocities) snapshot rather than a full
+    (T, N, 3) trajectory -- meant for one-off snapshots such as the
+    pre-correction state captured by core.leapfrog.CorrectionEvent, where
+    running the full events pipeline would be overkill.
+
+    Args:
+        positions: shape-(N, 3) array of positions.
+        velocities: shape-(N, 3) array of velocities.
+
+    Returns:
+        Tuple of (distance, relative_velocity, neighbor_id), each shape-(N,).
+        For N < 2, distance is np.inf, relative_velocity is 0.0, and
+        neighbor_id is -1 for every body.
+    """
+    n = positions.shape[0]
+    if n < 2:
+        return (
+            np.full(n, np.inf),
+            np.zeros(n),
+            np.full(n, -1, dtype=int),
+        )
+    diff = positions[np.newaxis, :, :] - positions[:, np.newaxis, :]
+    dist = np.linalg.norm(diff, axis=-1)
+    np.fill_diagonal(dist, np.inf)
+    neighbor_id = np.argmin(dist, axis=1)
+    distance = dist[np.arange(n), neighbor_id]
+    vel_diff = velocities[np.newaxis, :, :] - velocities[:, np.newaxis, :]
+    rel_speed = np.linalg.norm(vel_diff, axis=-1)
+    relative_velocity = rel_speed[np.arange(n), neighbor_id]
+    return distance, relative_velocity, neighbor_id.astype(int)
+
+
 def mass_ratio(masses: np.ndarray) -> float:
     """
     Compute a single scalar summarizing the mass ratio of the system,
