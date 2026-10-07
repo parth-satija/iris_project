@@ -273,6 +273,7 @@ def generate_calibration_batch(
     dt: float = 1.0e-3,
     total_time: float = 5.0,
     correction_threshold: float = DEFAULT_CORRECTION_THRESHOLD,
+    body_counts: tuple[int, ...] | None = None,
 ) -> list[str]:
     """
     Generate a batch of `n_experiments` randomized configurations, cycling
@@ -287,15 +288,26 @@ def generate_calibration_batch(
         total_time: Total simulated duration shared by all experiments.
         correction_threshold: RMS position-error threshold shared by all
             generated experiments; see ExperimentConfig.correction_threshold.
+        body_counts: Optional subset of SUPPORTED_BODY_COUNTS to cycle through
+            instead of all of them, e.g. (3,) for three-body systems only.
+            Defaults to every supported body count.
 
     Returns:
         List of file paths to the generated JSON configuration files, in
         generation order.
+
+    Raises:
+        ValueError: If body_counts is empty or contains an unsupported count.
     """
+    counts = SUPPORTED_BODY_COUNTS if body_counts is None else tuple(body_counts)
+    if not counts or any(c not in SUPPORTED_BODY_COUNTS for c in counts):
+        raise ValueError(
+            f"body_counts must be a non-empty subset of {SUPPORTED_BODY_COUNTS}, got {body_counts}"
+        )
     paths: list[str] = []
     for i in range(n_experiments):
         seed = base_seed + i
-        body_count = SUPPORTED_BODY_COUNTS[i % len(SUPPORTED_BODY_COUNTS)]
+        body_count = counts[i % len(counts)]
         simulation_id = f"sim_{i:04d}_n{body_count}_seed{seed}"
         config = generate_experiment_config(
             simulation_id=simulation_id,

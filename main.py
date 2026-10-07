@@ -77,6 +77,15 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--three-body",
+        action="store_true",
+        help=(
+            "Generate only 3-body systems. Results go to their OWN folders "
+            "(experiments/configs_3body, outputs/csv_3body) so they never mix with a "
+            "regular 2-5 body run. Train on them with: python fit_safety_models.py --three-body"
+        ),
+    )
+    parser.add_argument(
         "--plot",
         action="store_true",
         help="Generate an optional validation trajectory plot after running.",
@@ -141,21 +150,30 @@ def main() -> None:
 
     start_time = time.perf_counter()
 
-    print(f"Generating {args.n_experiments} experiment configurations...")
+    # 3-body runs get their own directories so they never mix with (or overwrite) a
+    # regular 2-5 body dataset: configs and CSVs share simulation ids across runs.
+    suffix = "_3body" if args.three_body else ""
+    configs_dir = CONFIGS_DIR + suffix
+    csv_dir = CSV_DIR + suffix
+
+    print(f"Generating {args.n_experiments} experiment configurations"
+          f"{' (3-body systems only)' if args.three_body else ''}...")
     config_paths = generate_calibration_batch(
         n_experiments=args.n_experiments,
-        configs_dir=CONFIGS_DIR,
+        configs_dir=configs_dir,
         base_seed=args.seed,
         dt=args.dt,
         total_time=args.total_time,
         correction_threshold=args.correction_threshold,
+        body_counts=(3,) if args.three_body else None,
     )
-    print(f"Generated {len(config_paths)} configurations in {CONFIGS_DIR}\n")
+    print(f"Generated {len(config_paths)} configurations in {configs_dir}\n")
 
     print(f"Launching {len(config_paths)} calibration experiments across {args.workers} workers...")
+    print(f"CSV output: {csv_dir}")
     results = run_calibration_batch(
         config_paths=config_paths,
-        csv_dir=CSV_DIR,
+        csv_dir=csv_dir,
         n_workers=args.workers,
     )
 
@@ -185,7 +203,7 @@ def main() -> None:
     print("=====================================\n")
 
     if args.plot:
-        plot_path = make_validation_plot(CSV_DIR, FIGURES_DIR)
+        plot_path = make_validation_plot(csv_dir, FIGURES_DIR)
         if plot_path:
             print(f"Validation plot saved to: {plot_path}")
         else:

@@ -102,3 +102,79 @@ def run_ias15(
         velocities=velocities_out,
         masses=masses,
     )
+
+
+def run_ias15_stepped(
+    system: System,
+    total_time: float,
+    sample_interval: float,
+    dt: float,
+) -> Trajectory:
+    """
+    Pure IAS15, but forced to stop at EVERY multiple of `dt`, exactly the way the
+    adaptive integrator steps its IAS15 stretches (integrate to step*dt with
+    exact_finish_time), sampled on the same grid as run_ias15.
+
+    This is the CHAOS-FLOOR CONTROL: run_ias15 stops only at sample times, so it
+    and this run are two equally valid numerical solutions that differ only by
+    rounding-level noise (~1e-15). In a chaotic system that noise grows
+    exponentially, so the error of THIS run against run_ias15 is the best any
+    integrator that matches IAS15 to rounding can score. An adaptive error that
+    occurs where this control is still accurate is attributable to the algorithm;
+    one that occurs where the control has failed too is not fixable.
+
+    Args:
+        system: The initial System.
+        total_time: Total simulated duration.
+        sample_interval: Time between recorded samples (a multiple of dt).
+        dt: The step the adaptive run uses.
+
+    Raises:
+        ValueError: If an argument is non-positive or sample_interval is not a
+            multiple of dt.
+    """
+    if sample_interval <= 0 or total_time <= 0 or dt <= 0:
+        raise ValueError(
+            f"total_time, sample_interval and dt must be positive, got {total_time}, {sample_interval}, {dt}"
+        )
+    steps_per_sample = int(round(sample_interval / dt))
+    if steps_per_sample < 1 or abs(steps_per_sample * dt - sample_interval) > 1e-9 * sample_interval:
+        raise ValueError(f"sample_interval ({sample_interval}) must be a multiple of dt ({dt})")
+    n_steps = int(round(total_time / dt))
+    n_samples = n_steps // steps_per_sample + 1
+
+    sim = rebound.Simulation()
+    sim.integrator = "ias15"
+    sim.G = system.g
+    sim.softening = system.softening
+    for body in system.bodies:
+        sim.add(
+            m=body.mass,
+            x=body.position[0], y=body.position[1], z=body.position[2],
+            vx=body.velocity[0], vy=body.velocity[1], vz=body.velocity[2],
+        )
+
+    n = system.n
+    times_out = np.zeros(n_samples, dtype=np.float64)
+    positions_out = np.zeros((n_samples, n, 3), dtype=np.float64)
+    velocities_out = np.zeros((n_samples, n, 3), dtype=np.float64)
+
+    def record(k: int, t: float) -> None:
+        times_out[k] = t
+        for i, particle in enumerate(sim.particles):
+            positions_out[k, i] = (particle.x, particle.y, particle.z)
+            velocities_out[k, i] = (particle.vx, particle.vy, particle.vz)
+
+    record(0, 0.0)
+    for step in range(1, n_steps + 1):
+        sim.integrate(step * dt, exact_finish_time=1)
+        if step % steps_per_sample == 0:
+            k = step // steps_per_sample
+            record(k, k * sample_interval)
+
+    return Trajectory(
+        times=times_out,
+        positions=positions_out,
+        velocities=velocities_out,
+        masses=system.masses(),
+    )

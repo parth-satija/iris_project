@@ -54,13 +54,20 @@ Methodology notes worth knowing
   natural mix. The threshold table therefore also reports rates weighted
   by `sampling_weight` (approximately "per real sampled step"); treat
   those as estimates, since hard and baseline strata overlap slightly.
-* Features are limited to quantities a real-time check could compute from
-  Leapfrog's own state: pre_correction_* (acceleration, jerk, nearest-
-  neighbor distance, relative velocity), mass, mass_ratio, and the
-  situational flags (computed from the same pre-check state). Anything
-  that needs IAS15 (position_error, error_at_trigger,
-  system_position_error_pre_check) is deliberately excluded -- it would
-  be label leakage.
+* Features: the deployable index uses only CAUSAL quantities a real-time
+  check could compute from Leapfrog's own state: pre_correction_*
+  (acceleration, jerk, nearest-neighbor distance, relative velocity --
+  all from the integrator's own step, backward differences only), mass,
+  and mass_ratio. The situational flags are included ONLY as offline
+  reference models (feature sets marked `*`): calibration/events.py
+  computes them with central differences (np.gradient uses the NEXT
+  sample, which at a correction sample comes from the snapped state) and
+  with percentile thresholds taken over the whole run (which include the
+  future). They cannot be evaluated by a real-time check and can leak
+  look-ahead, so a good score from a `*` set is not evidence they are
+  useful inputs. Anything that needs IAS15 (position_error,
+  error_at_trigger, system_position_error_pre_check) is excluded as
+  label leakage.
 * `stable` is excluded (it is exactly the complement of the other flags,
   so it would be perfectly collinear), as are constant columns.
 """
@@ -122,7 +129,7 @@ FLAG_COLUMNS: tuple[str, ...] = (
     "quiescent_regime",
 )
 
-C_GRID = np.logspace(-3, 1, 5)
+C_GRID = np.logspace(-3, 2, 6)
 RECALL_TARGETS = (0.80, 0.90, 0.95, 0.99)
 
 
@@ -176,6 +183,27 @@ def load_data(csv_dir: str, n_jobs: int = 1) -> pd.DataFrame:
             f"Regenerate data with `python main.py` so negative examples are logged."
         )
     return pd.concat(frames, ignore_index=True)
+
+
+def keep_body_count(df: pd.DataFrame, count: int) -> pd.DataFrame:
+    """
+    Keep only rows from systems with exactly `count` bodies. The count is read
+    from the simulation_id (calibration/generator.py names them
+    sim_<i>_n<bodies>_seed<seed>), falling back to a body_count column.
+    """
+    n = df["simulation_id"].astype(str).str.extract(r"_n(\d+)_")[0].astype(float)
+    if n.isna().all() and "body_count" in df.columns:
+        n = df["body_count"].astype(float)
+    if n.isna().all():
+        raise SystemExit("Cannot tell the body count: no '_n<k>_' in simulation_id and no body_count column.")
+    out = df[n == count]
+    dropped = len(df) - len(out)
+    if dropped:
+        print(f"Body-count filter: kept {len(out)} rows from {count}-body systems, "
+              f"dropped {dropped} rows from other systems.")
+    if out.empty:
+        raise SystemExit(f"No {count}-body rows found. Generate them with: python main.py --three-body")
+    return out
 
 
 def build_features(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str], list[str]]:
@@ -464,7 +492,14 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Fit and compare safety-index models.")
     ap.add_argument(
         "--csv-dir",
-        default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "outputs", "csv"),
+        default=None,
+        help="Directory of per-body CSVs. Default: outputs/csv, or outputs/csv_3body with --three-body.",
+    )
+    ap.add_argument(
+        "--three-body",
+        action="store_true",
+        help="Train only on 3-body systems (reads outputs/csv_3body, as written by "
+        "`python main.py --three-body`; rows from other body counts are dropped if present).",
     )
     ap.add_argument("--folds", type=int, default=5, help="Grouped CV folds (default 5).")
     ap.add_argument("--seed", type=int, default=0)
@@ -484,12 +519,18 @@ def main() -> None:
     )
     args = ap.parse_args()
 
+    if args.csv_dir is None:
+        root = os.path.dirname(os.path.abspath(__file__))
+        args.csv_dir = os.path.join(root, "outputs", "csv_3body" if args.three_body else "csv")
+
     _assert_lasso_is_l1()
 
     print(f"Scanning {args.csv_dir!r} ...")
     df = load_data(args.csv_dir, args.jobs)
     role = df["sample_role"].astype(str)
     df = df[role.isin(["correction"]) | role.str.startswith("negative")].copy()
+    if args.three_body:
+        df = keep_body_count(df, 3).copy()
 
     F, cont_names, flag_names = build_features(df)
     df = df.loc[F.index]
@@ -527,6 +568,10 @@ def main() -> None:
         raise SystemExit("Need at least 2 experiments to cross-validate by simulation.")
 
     all_feats = cont_names + flag_names
+    # log_v_over_r == log_rel_velocity - log_nn_distance EXACTLY in log space,
+    # so a linear model with it is perfectly collinear (coefficients become
+    # arbitrary). Trees don't care; every linear model uses `lin_feats`.
+    lin_feats = [f for f in cont_names if f != "log_v_over_r"]
     rv = ["log_rel_velocity"]
     rv_flags = rv + flag_names
     # CAUSAL sets ("rv_only", "continuous") use only quantities Leapfrog can
@@ -539,14 +584,16 @@ def main() -> None:
     # future), so they cannot be evaluated by a real-time check and may leak
     # look-ahead information. They are kept to show how much of a score
     # comes from that, not as candidate index inputs.
-    causal_sets = {"rv_only", "continuous"}
+    causal_sets = {"rv_only", "jerk_only", "jerk+rv", "continuous"}
     configs = [
         ("logistic", "rv_only", rv),
-        ("ridge", "continuous", cont_names),
-        ("lasso", "continuous", cont_names),
+        ("logistic", "jerk_only", ["log_jerk"]),
+        ("logistic", "jerk+rv", ["log_jerk", "log_rel_velocity"]),
+        ("ridge", "continuous", lin_feats),
+        ("lasso", "continuous", lin_feats),
         ("gbt", "rv_only", rv),
         ("gbt", "continuous", cont_names),
-        ("ridge", "all*", all_feats),
+        ("ridge", "all*", lin_feats + flag_names),
         ("gbt", "rv+flags*", rv_flags),
         ("gbt", "all*", all_feats),
     ]
@@ -576,44 +623,85 @@ def main() -> None:
     print("  * gbt(continuous) <= ridge(continuous)   -> no nonlinear signal a linear index misses.")
     print("  * ridge/gbt(all*) >> continuous          -> flags help, but they look ahead; do not deploy.")
 
+    # Deployable index = causal features only (flags are offline references).
+    deploy_feats = lin_feats
     linear_fits = [
-        fit_full_linear(kind, all_feats, F, y, groups, n_jobs=args.jobs)
+        fit_full_linear(kind, deploy_feats, F, y, groups, n_jobs=args.jobs)
         for kind in ("ridge", "lasso")
     ]
     for kind, (C, w_std, coef_raw, b0) in zip(("ridge", "lasso"), linear_fits):
-        print(f"\n=== {kind} fit on all data (C={C:.3g}) ===")
+        print(f"\n=== {kind} fit on all data, causal features only (C={C:.3g}) ===")
         table = pd.DataFrame(
-            {"feature": all_feats, "std_coef": w_std, "raw_coef": coef_raw}
+            {"feature": deploy_feats, "std_coef": w_std, "raw_coef": coef_raw}
         )
         table = table.reindex(table["std_coef"].abs().sort_values(ascending=False).index)
         print(table.to_string(index=False, float_format=lambda v: f"{v:+.4f}"))
         if kind == "lasso":
-            kept = [f for f, c in zip(all_feats, w_std) if c != 0]
-            print(f"Lasso kept {len(kept)}/{len(all_feats)}: {kept}")
+            kept = [f for f, c in zip(deploy_feats, w_std) if c != 0]
+            print(f"Lasso kept {len(kept)}/{len(deploy_feats)}: {kept}")
         terms = " ".join(
-            f"{c:+.3f}*{f}" for f, c in zip(all_feats, coef_raw) if c != 0
+            f"{c:+.3f}*{f}" for f, c in zip(deploy_feats, coef_raw) if c != 0
         )
         print(f"safety_logit = {b0:+.3f} {terms}")
-        print("(log_* features are log10 of the raw quantity; flags are 0/1.)")
+        print("(features are log10 of the raw quantity.)")
+        print(f"\nPaste into core/safety_index.py::raw_safety_index ({kind}; use --index-scale sigmoid):")
+        print("    f = features.logs()")
+        print("    return (")
+        print(f"        {b0:+.4f}")
+        for f_name, c in zip(deploy_feats, coef_raw):
+            if c != 0:
+                print(f'        {c:+.4f} * f["{f_name}"]')
+        print("    )")
 
-    gbt_res = results[("gbt", "all")]
+    gbt_res = results[("gbt", "continuous")]
     if gbt_res["perm_importance"] is not None:
-        imp = pd.Series(gbt_res["perm_importance"], index=all_feats).sort_values(ascending=False)
-        print("\n=== GBT permutation importance (drop in held-out AUC when shuffled) ===")
+        imp = pd.Series(gbt_res["perm_importance"], index=cont_names).sort_values(
+            ascending=False
+        )
+        print("\n=== GBT(continuous) permutation importance (drop in held-out AUC when shuffled) ===")
         print(imp.head(10).to_string(float_format=lambda v: f"{v:.4f}"))
 
-    # Threshold guidance: compare the simple rv index with the best model's
-    # out-of-fold scores.
-    best_key = max(results, key=lambda k: results[k]["auc"][0])
+    # Threshold guidance: compare the simple rv index with the best CAUSAL
+    # model's out-of-fold scores (flag models are excluded: not deployable).
+    best_key = max(
+        (k for k in results if k[1] in causal_sets), key=lambda k: results[k]["auc"][0]
+    )
     print(f"\n=== Threshold trade-offs (out-of-fold scores; best model = {best_key}) ===")
     rv_score = F["log_rel_velocity"].to_numpy()
     print("\n-- Simple index: relative velocity (threshold shown in raw velocity units) --")
     t = threshold_table("rv", rv_score, y, w)
     t["threshold"] = 10 ** t["threshold"]
     print(t.to_string(index=False, float_format=lambda v: f"{v:.4g}"))
-    print(f"\n-- Best model {best_key} (threshold on its score) --")
+    print(f"\n-- Best causal model {best_key} (threshold on its score) --")
     t2 = threshold_table("best", results[best_key]["oof"], y, w)
     print(t2.to_string(index=False, float_format=lambda v: f"{v:.4g}"))
+    # Thresholds for the linear indices you would actually deploy. The 0-1 column is
+    # sigmoid(safety_logit): pass it to validate_adaptive.py --safety-threshold.
+    for kind in ("ridge", "lasso"):
+        tk = threshold_table(kind, results[(kind, "continuous")]["oof"], y, w)
+        tk.insert(2, "safety_threshold_0_1", 1.0 / (1.0 + np.exp(-np.clip(tk["threshold"], -700, 700))))
+        print(f"\n-- {kind} (continuous, causal features): out-of-fold safety_logit and its 0-1 form --")
+        print(tk.rename(columns={"threshold": "safety_logit_threshold"}).to_string(
+            index=False, float_format=lambda v: f"{v:.4g}"))
+    print(
+        "\nThe 0-1 score is NOT a calibrated probability (negatives are enriched); choose the "
+        "row from the recall / cost trade-off. Out-of-fold logits come from per-fold models, "
+        "so treat the thresholds as approximate for the final all-data formula above."
+    )
+    compact_key = ("logistic", "jerk+rv")
+    print(f"\n-- Compact deployable index {compact_key}: logit of log10(jerk), log10(rel_velocity) --")
+    t3 = threshold_table("compact", results[compact_key]["oof"], y, w)
+    print(t3.to_string(index=False, float_format=lambda v: f"{v:.4g}"))
+    compact_feats = ["log_jerk", "log_rel_velocity"]
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        compact = LogisticRegression(C=1e3, max_iter=1000).fit(F[compact_feats].to_numpy(), y)
+    a, b = compact.coef_.ravel()
+    print(
+        f"safety_logit = {compact.intercept_[0]:+.3f} {a:+.3f}*log10(jerk) "
+        f"{b:+.3f}*log10(relative_velocity)   [jerk, velocity in the units of your simulations]"
+    )
+    print("Thresholds above are on out-of-fold safety_logit; the formula is fit on all rows.")
     print(
         "\nfalse_pos_rate_weighted ~ share of ordinary steps sent to IAS15 needlessly "
         "(approximate; see notes at top). Pick the row whose recall/cost trade-off you "

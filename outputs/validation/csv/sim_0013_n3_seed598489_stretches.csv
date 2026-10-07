@@ -1,0 +1,2 @@
+start_step,start_time,end_step,n_steps,trigger_score,peak_score,max_deviation,false_positive,rewound,complete
+1,0.0,100000,100000,0.2845773856025812,0.428927637017814,0.00028187894070873834,False,True,False

@@ -1,0 +1,3 @@
+step,time,error,category
+28200,14.1,0.010301106157274989,accumulated_drift
+182850,91.425,0.010008393097532377,accumulated_drift

@@ -1,0 +1,70 @@
+{
+  "model": "L2 logistic regression on binary situation flags",
+  "score": "safety_logit = intercept + sum(weights[s] for active s); safety_score = sigmoid(safety_logit)",
+  "intercept": -12.830728488258202,
+  "weights": {
+    "ejection_escape": 6.835768644523713,
+    "involved_in_hierarchical_tight_pair": 4.611409113953447,
+    "near_collision": 4.3797363546774335,
+    "hierarchical_configuration": -2.5396773776756945,
+    "rapid_approach": -2.1625882514276555,
+    "strong_mass_ratio_interaction": 2.1377791943399798,
+    "acceleration_spike": 1.4949214061977172,
+    "involved_in_closest_pair_switch": 1.0325234462407211,
+    "closest_pair_switch": 0.9224416472501432,
+    "temporary_capture": 0.8706609637665284,
+    "chaotic_scattering": 0.40275627943506087,
+    "close_encounter": 0.3190472477862371,
+    "rapid_separation": -0.2541128448160426,
+    "high_relative_velocity_encounter": -0.24164140520825275,
+    "quiescent_regime": -0.16507218374445298,
+    "strong_acceleration": -0.04964243007188113,
+    "high_jerk": 0.04327875317470273,
+    "near_symmetric_configuration": -0.042343298036439464
+  },
+  "C": 10.0,
+  "fit_weighting": "sampling_weight",
+  "n_rows": 584130,
+  "n_experiments": 48,
+  "cv": {
+    "folds": 5,
+    "auc": 0.9133815882640983,
+    "weighted_auc": 0.9281356567529861,
+    "equal_weight_count_auc": 0.8732545715905128
+  },
+  "thresholds": [
+    {
+      "target_recall": 0.8,
+      "threshold": -4.482562706403382,
+      "safety_threshold_0_1": 0.011178044968282896,
+      "recall": 0.8103019780070132,
+      "false_pos_rate_enriched": 0.10157961053217895,
+      "false_pos_rate_weighted": 0.07413745654692931
+    },
+    {
+      "target_recall": 0.9,
+      "threshold": -5.857261495947549,
+      "safety_threshold_0_1": 0.002850911591643034,
+      "recall": 0.9013039185646682,
+      "false_pos_rate_enriched": 0.18499270851922553,
+      "false_pos_rate_weighted": 0.14980862543453072
+    },
+    {
+      "target_recall": 0.95,
+      "threshold": -6.186585788895526,
+      "safety_threshold_0_1": 0.002052615359653856,
+      "recall": 0.9558097572600688,
+      "false_pos_rate_enriched": 0.25475298193623513,
+      "false_pos_rate_weighted": 0.21995890063731172
+    },
+    {
+      "target_recall": 0.99,
+      "threshold": -9.572558891885025,
+      "safety_threshold_0_1": 6.960817765481602e-05,
+      "recall": 0.9905355258230347,
+      "false_pos_rate_enriched": 0.6548633005081504,
+      "false_pos_rate_weighted": 0.560473638470452
+    }
+  ],
+  "caveat": "Flags are computed offline (central differences, whole-run percentiles, post-snap state at corrections). A real-time integrator needs causal implementations of each situation."
+}

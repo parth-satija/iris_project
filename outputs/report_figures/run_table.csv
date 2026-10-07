@@ -1,0 +1,9 @@
+run,n_experiments,errors,baseline_errors,ias15_share_pct,rewinds,resyncs,correct,rewind,resync_on_switch,drift_budget,checkpoints,fp_detection,rollback_analysis,chaos_control
+A,32,15,53,50.97625,300,0,True,True,False,False,1.0,False,True,False
+B,32,15,53,50.97625,300,2,True,True,False,True,1.0,False,True,False
+C,32,2,53,86.827984375,300,2,True,True,False,True,,False,True,False
+D,32,4,53,50.975375,300,300,True,True,True,False,1.0,False,True,False
+E,32,4,53,50.975375,300,302,True,True,True,True,1.0,False,True,False
+F,32,3,53,50.97548437499999,300,535,True,True,True,True,1.0,False,True,False
+G,32,3,53,50.97548437499999,300,1501,True,True,True,True,1.0,False,True,False
+latest,32,2,53,22.203156249999996,666,2396,True,True,True,True,8.0,False,True,False

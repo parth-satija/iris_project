@@ -1,0 +1,2 @@
+step,to_step,time,score,chosen_depth,category,dev_leapfrog,dev_chosen,best_depth,dev_best,min_adequate_depth,anchor_step,dev_anchor
+4812,0,2.4055,0.13400407766331318,-1,adequate,5.194894760177667e-09,5.768888059150692e-16,-1,,-1,0,5.768888059150692e-16
