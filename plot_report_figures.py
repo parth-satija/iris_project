@@ -4,6 +4,10 @@ plot_report_figures.py
 Report figures for the IRIS adaptive-integrator work. This file implements the
 MUST-HAVE set, numbered as in the figure plan:
 
+Implemented: 1 2 4 5 6 7 8 9 10 11 12 13 14 15 18 19 20 21 22 23 24 25 26 27 28 29 30 33
+(4, 5, 6, 8, 9, 10 need `python export_model_results.py --three-body` first.)
+Not implemented (need reruns or are diagrams): 3 16 17 31 32 34 35 36 37 38 39
+
      5  Model comparison: grouped-CV AUC and weighted AUC with fold-std error bars   [needs export_model_results.py]
      9  Recall vs false-positive-rate trade-off, 0.80/0.90/0.95/0.99 recall marked    [needs export_model_results.py]
     14  Three-panel time series of one experiment (error / safety score / IAS15 share)
@@ -558,7 +562,602 @@ def fig26(args, runs) -> None:
 
 
 # --------------------------------------------------------------------------
-FIGS = {5: fig05, 9: fig09, 14: fig14, 20: fig20, 24: fig24, 25: fig25, 26: fig26}
+# --------------------------------------------------------------------------
+# Batch 2: figures built from existing files and from export_model_results.py
+# --------------------------------------------------------------------------
+STRETCH_ALL = (0, 10**12)  # stretches are not restricted to the 956-987 family
+ERR_COLORS = {"accumulated_drift": "#c8553d", "improvable": "#e9a03b", "after_adequate": "#3b6ea5",
+              "undetected": "#777777"}
+
+
+def read_sim(run_dir: str, sim: str, suffix: str = "validation"):
+    p = os.path.join(csv_dir_of(run_dir), f"{sim}_{suffix}.csv")
+    return pd.read_csv(p) if os.path.isfile(p) and _has_header(p) else None
+
+
+def truthy(s: pd.Series) -> np.ndarray:
+    return s.astype(str).str.lower().eq("true").to_numpy()
+
+
+def summary_for(args, runs):
+    name, d = pick_run(runs, args.summary_run)
+    return name, d, load_summary(d, args.seed_min, args.seed_max)
+
+
+def concat_sim_csvs(run_dir: str, suffix: str, smin: int, smax: int) -> pd.DataFrame:
+    frames = []
+    for f in sim_files(csv_dir_of(run_dir), suffix, smin, smax):
+        d = pd.read_csv(f)
+        if len(d):
+            d["simulation_id"] = os.path.basename(f)[: -len(f"_{suffix}.csv")]
+            frames.append(d)
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+
+# ---- A. problem and setup ------------------------------------------------
+def fig01(args, runs) -> None:
+    name, d, s = summary_for(args, runs)
+    f = s.dropna(subset=["baseline_first_exceed_time"])
+    if args.sim:
+        sim = args.sim
+    elif f.empty:
+        print("  SKIPPED: no experiment where the baseline crosses the threshold")
+        return
+    else:
+        med = f["baseline_first_exceed_time"].median()
+        sim = f.loc[(f["baseline_first_exceed_time"] - med).abs().idxmin(), "simulation_id"]
+        print(f"  auto-selected {sim} (median first-crossing time); override with --sim")
+    df = read_sim(d, sim)
+    if df is None:
+        print(f"  SKIPPED: validation csv for {sim} not found in {csv_dir_of(d)}")
+        return
+    t = df["time"].to_numpy()
+    err = df.get("baseline_pre_check_error", df["baseline_position_error"]).clip(lower=1e-15)
+    row = s[s["simulation_id"] == sim]
+    first = float(row["baseline_first_exceed_time"].iloc[0]) if len(row) else np.nan
+
+    fig, ax = plt.subplots(2, 1, figsize=(9.5, 6.8), sharex=True,
+                           gridspec_kw={"height_ratios": [1.6, 1], "hspace": 0.1})
+    ax[0].plot(t, err, color="#c8553d", lw=1.3, label="Leapfrog error vs IAS15 (IAS15 = reference, error 0)")
+    ax[0].axhline(CORRECTION_THRESHOLD, color="k", ls="--", lw=1, label=f"correction threshold {CORRECTION_THRESHOLD:g}")
+    if np.isfinite(first):
+        ax[0].axvline(first, color="#555", ls=":", lw=1.2, label=f"first crossing, t = {first:.1f}")
+    ax[0].set_yscale("log")
+    ax[0].set_ylabel("RMS position error")
+    ax[0].set_title(f"Why the problem exists: Leapfrog error growth ({sim})")
+    ax[0].legend(loc="lower right", fontsize=8.8)
+    if bool(col(s, "correction_enabled").fillna(False).astype(bool).any()):
+        ax[0].text(0.01, 0.97, "run used --correct: the error resets after every snap", transform=ax[0].transAxes,
+                   fontsize=8, va="top", color="#555")
+    for c, lab, colr in (("baseline_energy_drift", "Leapfrog", "#c8553d"), ("ias15_energy_drift", "IAS15", "#1d4e89")):
+        if c in df:
+            ax[1].plot(t, df[c].abs().clip(lower=1e-17), color=colr, lw=1.1, label=lab)
+    ax[1].set_yscale("log")
+    ax[1].set_ylabel("|relative energy drift|")
+    ax[1].set_xlabel("Time")
+    ax[1].legend(loc="lower right", fontsize=8.8)
+    save(fig, "fig01_error_growth", args)
+
+
+def fig02(args, runs) -> None:
+    name, d, s = summary_for(args, runs)
+    x = s["baseline_first_exceed_time"]
+    failed = x.notna()
+    if not failed.any():
+        print("  SKIPPED: baseline never crosses the threshold")
+        return
+    xs = np.sort(x[failed].to_numpy())
+    top = xs.max() * 1.18
+    fig, (ax, axh) = plt.subplots(1, 2, figsize=(10.5, 5.2), sharey=True, gridspec_kw={"width_ratios": [2.2, 1]})
+    ax.scatter(np.arange(len(xs)), xs, s=42, color="#c8553d", zorder=3, label="baseline crosses threshold")
+    n_ok = int((~failed).sum())
+    ax.scatter(np.arange(len(xs), len(xs) + n_ok), np.full(n_ok, top), s=42, facecolor="white", edgecolor="#555",
+               zorder=3, label="never crosses")
+    ax.axhline(np.median(xs), color="#c8553d", ls=":", lw=1.2)
+    ax.text(0, np.median(xs), f" median {np.median(xs):.1f}", va="bottom", fontsize=9, color="#c8553d")
+    ax.set_xlabel("Experiment (sorted by crossing time)")
+    ax.set_ylabel(f"Time of first RMS error > {CORRECTION_THRESHOLD:g}")
+    ax.set_title(f"Leapfrog fails in {int(failed.sum())} of {len(s)} experiments")
+    ax.legend(loc="upper left", bbox_to_anchor=(0, 0.93), fontsize=9)
+    axh.hist(xs, bins=12, orientation="horizontal", color="#c8553d", alpha=0.75)
+    axh.set_xlabel("count")
+    save(fig, "fig02_first_crossing", args)
+
+
+# ---- B. safety-index derivation -----------------------------------------
+def fig04(args, runs) -> None:
+    if not need_analysis(args, "feature_corr.csv"):
+        return
+    C = pd.read_csv(os.path.join(args.analysis_dir, "feature_corr.csv"), index_col=0)
+    n = len(C)
+    fig, ax = plt.subplots(figsize=(0.95 * n + 2.5, 0.85 * n + 1.8))
+    im = ax.imshow(C.to_numpy(), cmap="RdBu_r", vmin=-1, vmax=1)
+    for i in range(n):
+        for j in range(n):
+            v = C.iloc[i, j]
+            ax.text(j, i, f"{v:.2f}", ha="center", va="center", fontsize=9,
+                    color="white" if abs(v) > 0.6 else "black")
+    ax.set_xticks(range(n))
+    ax.set_yticks(range(n))
+    ax.set_xticklabels(C.columns, rotation=40, ha="right")
+    ax.set_yticklabels(C.index)
+    ax.grid(False)
+    fig.colorbar(im, ax=ax, shrink=0.8, label="Pearson r (log10 space)")
+    ax.set_title("Feature collinearity: why ridge, not OLS")
+    if "log_v_over_r" in C:
+        ax.text(0, -0.12, "log_v_over_r = log_rel_velocity - log_nn_distance exactly, so it is excluded from every linear model.",
+                transform=ax.transAxes, fontsize=8, color="#555")
+    save(fig, "fig04_collinearity", args)
+
+
+def fig06(args, runs) -> None:
+    if not need_analysis(args, "linear_coefficients.csv"):
+        return
+    c = pd.read_csv(os.path.join(args.analysis_dir, "linear_coefficients.csv"))
+    ridge = c[c["model"] == "ridge"].set_index("feature")["std_coef"]
+    lasso = c[c["model"] == "lasso"].set_index("feature")["std_coef"].reindex(ridge.index)
+    order = ridge.abs().sort_values().index
+    ridge, lasso = ridge[order], lasso[order]
+    y = np.arange(len(order))
+    fig, ax = plt.subplots(figsize=(8.6, 0.8 * len(order) + 2))
+    ax.barh(y + 0.19, ridge.values, 0.36, color="#3b6ea5", label=f"ridge (C={c[c.model == 'ridge']['C'].iloc[0]:.3g})")
+    ax.barh(y - 0.19, lasso.values, 0.36, color="#e07a3f", label=f"lasso (C={c[c.model == 'lasso']['C'].iloc[0]:.3g})")
+    for yi, v in zip(y, lasso.values):
+        if v == 0:
+            ax.text(0, yi - 0.19, "  zeroed by lasso", va="center", fontsize=8.5, color="#e07a3f")
+    ax.axvline(0, color="k", lw=0.8)
+    ax.set_yticks(y)
+    ax.set_yticklabels(order)
+    ax.set_xlabel("Standardized coefficient (per 1 std of the log10 feature)")
+    ax.set_title("Ridge vs lasso: which features lasso drops")
+    ax.legend(loc="lower right")
+    save(fig, "fig06_ridge_vs_lasso", args)
+
+
+# Source: core/safety_index.py::raw_safety_index (current, 3-body ridge) and its docstring ("previous version", 2-5 body).
+COEF_3BODY = {"log_rel_velocity": 0.6963, "log_jerk": 0.2168, "log_acceleration": 0.4218,
+              "log_nn_distance": -0.2614, "log_mass": -2.0146, "log_mass_ratio": -2.5698}
+COEF_MIXED = {"log_rel_velocity": -4.979, "log_jerk": 7.484, "log_acceleration": -6.372,
+              "log_nn_distance": 8.370, "log_mass": -0.088, "log_mass_ratio": -0.273}
+
+
+def fig07(args, runs) -> None:
+    feats = list(COEF_3BODY)
+    y = np.arange(len(feats))[::-1]
+    a = np.array([COEF_MIXED[f] for f in feats])
+    b = np.array([COEF_3BODY[f] for f in feats])
+    fig, ax = plt.subplots(figsize=(9, 5.4))
+    ax.barh(y + 0.19, a, 0.36, color="#8e6bbf", label="fit on mixed 2-5 body data (CV AUC 0.907)")
+    ax.barh(y - 0.19, b, 0.36, color="#2a9d8f", label="fit on 3-body data only (CV AUC 0.744)")
+    for yi, va, vb in zip(y, a, b):
+        ax.text(va + (0.15 if va >= 0 else -0.15), yi + 0.19, f"{va:+.2f}", va="center",
+                ha="left" if va >= 0 else "right", fontsize=8.5)
+        ax.text(vb + (0.15 if vb >= 0 else -0.15), yi - 0.19, f"{vb:+.2f}", va="center",
+                ha="left" if vb >= 0 else "right", fontsize=8.5)
+        if np.sign(va) != np.sign(vb):
+            ax.text(0.985, yi, "sign flip", transform=ax.get_yaxis_transform(), ha="right", va="center", fontsize=8.5,
+                    fontweight="bold", color="#d1495b",
+                    bbox={"boxstyle": "round,pad=0.2", "fc": "white", "ec": "#d1495b"})
+    ax.axvline(0, color="k", lw=0.8)
+    ax.set_yticks(y)
+    ax.set_yticklabels(feats)
+    ax.set_xlabel("Raw coefficient on the log10 feature")
+    ax.set_title("Coefficient instability between the 2-5 body and 3-body ridge fits")
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.12), ncol=2, fontsize=8.8)
+    ax.set_xlim(min(a.min(), b.min()) - 2, max(a.max(), b.max()) + 4.5)
+    save(fig, "fig07_coefficient_instability", args)
+
+
+def _curves(score, y, w=None):
+    ok = np.isfinite(score)
+    s, yy = score[ok], y[ok]
+    ww = np.ones_like(s) if w is None else w[ok]
+    o = np.argsort(-s, kind="stable")
+    yy, ww = yy[o], ww[o]
+    tp, fp = np.cumsum(ww * yy), np.cumsum(ww * (1 - yy))
+    tpr, fpr, prec = tp / tp[-1], fp / fp[-1], tp / (tp + fp)
+    fpr0, tpr0 = np.r_[0, fpr], np.r_[0, tpr]
+    auc = float(np.sum(np.diff(fpr0) * (tpr0[1:] + tpr0[:-1]) / 2))
+    ap = float(np.sum(np.diff(np.r_[0, tpr]) * prec))
+    return fpr0, tpr0, tpr, prec, auc, ap
+
+
+def fig08(args, runs) -> None:
+    if not need_analysis(args, "oof_scores.npz"):
+        return
+    z = np.load(os.path.join(args.analysis_dir, "oof_scores.npz"))
+    y, w = z["y"].astype(int), z["w"].astype(float)
+    fig, (a1, a2) = plt.subplots(1, 2, figsize=(13, 5.8))
+    others = [("lasso", "continuous", "lasso", "#2a9d8f", "-."), ("gbt", "continuous", "GBT (continuous)", "#e07a3f", "--"),
+              ("logistic", "rv_only", "relative velocity only", "#888", ":")]
+    for kind, feats, lab, c, ls in others:
+        k = oof_key(kind, feats)
+        if k in z:
+            fpr, tpr, rec, prec, auc, ap = _curves(z[k], y)
+            a1.plot(fpr, tpr, color=c, ls=ls, lw=1.3, label=f"{lab} (AUC {auc:.3f})")
+            a2.plot(rec, prec, color=c, ls=ls, lw=1.3, label=f"{lab} (AP {ap:.3f})")
+    sc = z[oof_key("ridge", "continuous")]
+    for wt, ls, tag in ((None, "-", "unweighted"), (w, "--", "weighted")):
+        fpr, tpr, rec, prec, auc, ap = _curves(sc, y, wt)
+        a1.plot(fpr, tpr, color="#1d4e89", ls=ls, lw=2.4 if wt is None else 1.8, label=f"ridge, {tag} (AUC {auc:.3f})")
+        a2.plot(rec, prec, color="#1d4e89", ls=ls, lw=2.4 if wt is None else 1.8, label=f"ridge, {tag} (AP {ap:.3f})")
+    a1.plot([0, 1], [0, 1], color="#bbb", lw=1)
+    a1.set(xlabel="False-positive rate", ylabel="True-positive rate (recall)", title="ROC (out-of-fold)")
+    a1.legend(loc="lower right", fontsize=8.5)
+    a2.axhline(y.mean(), color="#bbb", lw=1, label=f"prevalence {y.mean():.3f} (enriched sample)")
+    a2.axhline((w * y).sum() / w.sum(), color="#bbb", ls="--", lw=1, label=f"weighted prevalence {(w * y).sum() / w.sum():.4f}")
+    a2.set(xlabel="Recall", ylabel="Precision", title="Precision-recall (out-of-fold)", ylim=(0, 1.02))
+    a2.legend(loc="upper right", fontsize=8.5)
+    save(fig, "fig08_roc_pr", args)
+
+
+def fig10(args, runs) -> None:
+    if not need_analysis(args, "oof_scores.npz"):
+        return
+    z = np.load(os.path.join(args.analysis_dir, "oof_scores.npz"))
+    y = z["y"].astype(int)
+    s = z[oof_key("ridge", "continuous")]
+    ok = np.isfinite(s)
+    lo, hi = np.percentile(s[ok], [0.5, 99.5])
+    bins = np.linspace(lo, hi, 70)
+    fig, ax = plt.subplots(figsize=(9.5, 5.6))
+    ax.hist(s[ok & (y == 0)], bins=bins, density=True, color="#3b6ea5", alpha=0.55, label="negatives (Leapfrog was fine)")
+    ax.hist(s[ok & (y == 1)], bins=bins, density=True, color="#c8553d", alpha=0.55, label="corrections")
+    for r in RECALL_TARGETS:
+        thr = threshold_for_recall(s, y, r)
+        if lo <= thr <= hi:
+            ax.axvline(thr, color="k", ls="--", lw=0.9)
+            ax.text(thr, ax.get_ylim()[1] * 0.97, f" recall {r:.2f}", rotation=90, va="top", fontsize=8.5)
+    ax.set_xlabel("Out-of-fold safety logit (ridge, causal features)")
+    ax.set_ylabel("Density")
+    ax.set_title("Safety logit: corrections vs negatives (overlap = why high-recall thresholds collapse)")
+    ax.legend(loc="upper left")
+    save(fig, "fig10_logit_distribution", args)
+
+
+def _situations(args):
+    p = os.path.join(args.outputs_dir, "situation_weights.csv")
+    if not os.path.isfile(p):
+        print(f"  SKIPPED: {p} not found")
+        return None
+    d = pd.read_csv(p)
+    d["unstable"] = d["fold_sign_agreement"].between(0.39, 0.61)
+    return d
+
+
+def fig11(args, runs) -> None:
+    d = _situations(args)
+    if d is None:
+        return
+    d = d.sort_values("weight")
+    y = np.arange(len(d))
+    colors = np.where(d["unstable"], "#e9a03b", np.where(d["weight"] >= 0, "#3b6ea5", "#c8553d"))
+    fig, ax = plt.subplots(figsize=(9, 0.42 * len(d) + 2))
+    ax.barh(y, d["weight"], xerr=d["weight_fold_std"], color=colors, error_kw={"elinewidth": 1, "capsize": 2})
+    for i, (_, r) in enumerate(d.iterrows()):
+        if r["unstable"]:
+            ax.text(0.01, i, f" sign agreement {r['fold_sign_agreement']:.1f}", transform=ax.get_yaxis_transform(),
+                    va="center", fontsize=8, color="#8a5a00")
+    ax.axvline(0, color="k", lw=0.8)
+    ax.set_yticks(y)
+    ax.set_yticklabels(d["situation"])
+    ax.set_xlabel("Fitted weight (bar = ±1 std across CV folds)")
+    ax.set_title("Situation weights")
+    ax.legend(handles=[plt.Rectangle((0, 0), 1, 1, fc="#3b6ea5"), plt.Rectangle((0, 0), 1, 1, fc="#c8553d"),
+                       plt.Rectangle((0, 0), 1, 1, fc="#e9a03b")],
+              labels=["positive", "negative", "unstable (fold sign agreement 0.4-0.6)"], loc="lower right", fontsize=8.5)
+    save(fig, "fig11_situation_weights", args)
+
+
+def fig12(args, runs) -> None:
+    d = _situations(args)
+    if d is None:
+        return
+    pos = d[d["lift"] > 0]
+    fig, ax = plt.subplots(figsize=(9, 6.2))
+    ax.scatter(pos["lift"], pos["weight"], s=60, c=np.where(pos["unstable"], "#e9a03b", "#3b6ea5"), zorder=3)
+    focus = {"near_collision", "close_encounter", "rapid_approach"}
+    for _, r in pos.iterrows():
+        big = r["situation"] in focus or abs(r["weight"]) > 1.5
+        ax.annotate(r["situation"], (r["lift"], r["weight"]), xytext=(5, 4), textcoords="offset points",
+                    fontsize=9 if big else 7.5, fontweight="bold" if r["situation"] in focus else "normal")
+    ax.axhline(0, color="k", lw=0.8)
+    ax.set_xscale("log")
+    ax.set_xlabel("Lift  P(correction | on) / P(correction | off)  (log)")
+    ax.set_ylabel("Fitted weight in the joint model")
+    ax.set_title("Overlapping flags trade credit: lift vs fitted weight")
+    zero = d[d["lift"] <= 0]["situation"].tolist()
+    if zero:
+        ax.text(0.01, 0.01, f"not shown (lift 0): {', '.join(zero)}", transform=ax.transAxes, fontsize=7.5, color="#555")
+    save(fig, "fig12_lift_vs_weight", args)
+
+
+def fig13(args, runs) -> None:
+    import json
+    p = os.path.join(args.outputs_dir, "situation_weights.json")
+    if not os.path.isfile(p):
+        print(f"  SKIPPED: {p} not found")
+        return
+    j = json.load(open(p))
+    cv = j["cv"]
+    labels = ["weighted situations\n(CV AUC)", "weighted situations\n(sample-weighted AUC)", "count of flags\n(CV AUC)"]
+    vals = [cv["auc"], cv["weighted_auc"], cv["equal_weight_count_auc"]]
+    fig, (ax, axt) = plt.subplots(1, 2, figsize=(12.5, 4.8), gridspec_kw={"width_ratios": [1, 1.5]})
+    bars = ax.bar(range(3), vals, color=["#3b6ea5", "#7fa6cf", "#999"], width=0.6)
+    for b, v in zip(bars, vals):
+        ax.text(b.get_x() + b.get_width() / 2, v + 0.004, f"{v:.3f}", ha="center", fontweight="bold")
+    ax.set_xticks(range(3))
+    ax.set_xticklabels(labels, fontsize=8.5)
+    ax.set_ylim(0.8, 0.96)
+    ax.set_ylabel("ROC-AUC")
+    ax.set_title("Weighted situations vs count of flags")
+    axt.axis("off")
+    t = pd.DataFrame(j["thresholds"])
+    cells = [[f"{r.target_recall:.2f}", f"{r.recall:.3f}", f"{r.threshold:.2f}", f"{r.safety_threshold_0_1:.3g}",
+              f"{100 * r.false_pos_rate_enriched:.1f}%", f"{100 * r.false_pos_rate_weighted:.1f}%"] for r in t.itertuples()]
+    tab = axt.table(cellText=cells, colLabels=["target recall", "recall", "logit thr.", "score thr.", "FPR (enriched)",
+                                               "FPR (weighted)"], loc="center", cellLoc="center")
+    tab.auto_set_font_size(False)
+    tab.set_fontsize(9.5)
+    tab.scale(1, 1.8)
+    axt.set_title("Threshold table (out-of-fold)")
+    save(fig, "fig13_situations_vs_count", args)
+
+
+# ---- C. switching ---------------------------------------------------------
+def fig15(args, runs) -> None:
+    name, d, s = summary_for(args, runs)
+    cand = s[col(s, "n_switches").fillna(0) > 0].sort_values("simulation_id")
+    if cand.empty:
+        print("  SKIPPED: no experiment with switches")
+        return
+    pick = cand.iloc[np.unique(np.linspace(0, len(cand) - 1, min(args.strip_n, len(cand))).round().astype(int))]
+    rows, ids, t = [], [], None
+    for sim in pick["simulation_id"]:
+        df = read_sim(d, sim)
+        if df is None:
+            continue
+        rows.append((df["active_integrator"].astype(str).str.lower() == "ias15").to_numpy())
+        ids.append(sim)
+        t = df["time"].to_numpy() if t is None else t
+    if not rows:
+        print("  SKIPPED: no validation csvs found")
+        return
+    m = min(len(r) for r in rows)
+    M = np.vstack([r[:m] for r in rows]).astype(float)
+    from matplotlib.colors import ListedColormap
+    fig, ax = plt.subplots(figsize=(11, 0.42 * len(ids) + 1.8))
+    ax.imshow(M, aspect="auto", interpolation="nearest", extent=[t[0], t[m - 1], len(ids), 0],
+              cmap=ListedColormap(["#e8eef5", "#1d4e89"]), vmin=0, vmax=1)
+    ax.set_yticks(np.arange(len(ids)) + 0.5)
+    ax.set_yticklabels([i.replace("sim_", "") for i in ids], fontsize=8)
+    ax.set_xlabel("Time")
+    ax.set_title(f"Integrator state per experiment (run {name}): dark = IAS15, light = Leapfrog")
+    ax.grid(False)
+    save(fig, "fig15_integrator_timeline", args)
+
+
+# ---- D. diagnostics -------------------------------------------------------
+def _stretches(args, runs):
+    name, d = pick_run(runs, args.stretch_run)
+    S = concat_sim_csvs(d, "stretches", *STRETCH_ALL)
+    if S.empty:
+        print(f"  SKIPPED: no *_stretches.csv in {csv_dir_of(d)}")
+        return name, None
+    S["false_positive"] = truthy(S["false_positive"])
+    return name, S
+
+
+def fig18(args, runs) -> None:
+    name, S = _stretches(args, runs)
+    if S is None:
+        return
+    dev = S["max_deviation"].clip(lower=1e-12)
+    bins = np.logspace(np.log10(dev.min()), np.log10(max(dev.max(), 1)), 50)
+    thr = args.fp_threshold
+    fig, ax = plt.subplots(figsize=(9.5, 5.4))
+    ax.hist(dev[S["false_positive"]], bins=bins, color="#2a9d8f", alpha=0.8, label="false positive (IAS15 not needed)")
+    ax.hist(dev[~S["false_positive"]], bins=bins, color="#c8553d", alpha=0.8, label="needed")
+    ax.axvline(thr, color="k", ls="--", lw=1.2, label=f"FP threshold {thr:g}")
+    ax.set_xscale("log")
+    fp_share = S["false_positive"].mean()
+    steps_share = S.loc[S["false_positive"], "n_steps"].sum() / S["n_steps"].sum()
+    ax.set_xlabel("Max shadow-Leapfrog deviation within the stretch")
+    ax.set_ylabel("IAS15 stretches")
+    ax.set_title(f"False-positive stretches (run {name}, {len(S)} stretches, {S['simulation_id'].nunique()} experiments)")
+    ax.text(0.98, 0.62, f"{100 * fp_share:.0f}% of stretches are false positives\n{100 * steps_share:.0f}% of IAS15 steps were unneeded",
+            transform=ax.transAxes, ha="right", fontsize=10)
+    ax.legend(loc="upper right")
+    save(fig, "fig18_false_positive_hist", args)
+
+
+def fig19(args, runs) -> None:
+    name, S = _stretches(args, runs)
+    if S is None:
+        return
+    n = S["n_steps"].clip(lower=1)
+    bins = np.logspace(0, np.log10(n.max() * 1.05), 45)
+    fig, ax = plt.subplots(figsize=(9.5, 5.4))
+    ax.hist(n, bins=bins, color="#3b6ea5", alpha=0.85)
+    ax.axvline(n.median(), color="k", ls=":", lw=1.2)
+    ax.text(n.median(), ax.get_ylim()[1] * 0.95, f" median {n.median():,.0f} steps", fontsize=9, va="top")
+    ax.annotate(f"longest: {int(n.max()):,} steps", (n.max(), 1), xytext=(-10, 30), textcoords="offset points",
+                ha="right", arrowprops={"arrowstyle": "->"})
+    ax.set_xscale("log")
+    ax.set_xlabel("Stretch length (steps, log)")
+    ax.set_ylabel("IAS15 stretches")
+    ax.set_title(f"Stretch length distribution (run {name}, n={len(S)})")
+    save(fig, "fig19_stretch_lengths", args)
+
+
+def _stack(args, runs, cols, labels, colors, title, fname, ylabel) -> None:
+    rows = []
+    for name, d in runs.items():
+        s = load_summary(d, args.seed_min, args.seed_max)
+        if all(col(s, c).notna().any() for c in cols):
+            rows.append((name, [int(col(s, c).fillna(0).sum()) for c in cols]))
+    if not rows:
+        print("  SKIPPED: no run has these columns")
+        return
+    fig, ax = plt.subplots(figsize=(9.5, 5.6))
+    bottom = np.zeros(len(rows))
+    for k, (lab, c) in enumerate(zip(labels, colors)):
+        v = np.array([r[1][k] for r in rows], float)
+        ax.bar([r[0] for r in rows], v, bottom=bottom, color=c, label=lab)
+        for i, (vi, bi) in enumerate(zip(v, bottom)):
+            if vi > 0 and vi >= 0.04 * max(1, (np.array([sum(r[1]) for r in rows])).max()):
+                ax.text(i, bi + vi / 2, f"{int(vi)}", ha="center", va="center", fontsize=8.5, color="white")
+        bottom += v
+    ax.set_ylabel(ylabel)
+    ax.set_title(title)
+    ax.legend(fontsize=8.8, loc="upper left", bbox_to_anchor=(1.01, 1))
+    save(fig, fname, args)
+    print("  " + ", ".join(f"{n}: {v}" for n, v in rows))
+
+
+def fig21(args, runs) -> None:
+    _stack(args, runs, ["rewinds_adequate", "rewinds_improvable", "rewinds_drift_dominated"],
+           ["adequate", "improvable", "drift-dominated"], ["#2a9d8f", "#e9a03b", "#c8553d"],
+           "Rewind classification per run", "fig21_rewind_classification", "Rewinds")
+
+
+def fig22(args, runs) -> None:
+    _stack(args, runs, ["errors_improvable", "errors_accumulated_drift", "errors_after_adequate", "errors_undetected"],
+           ["improvable by deeper rollback", "accumulated drift", "after adequate rewind", "undetected"],
+           ["#e9a03b", "#c8553d", "#3b6ea5", "#777777"], "Error attribution per run", "fig22_error_attribution",
+           "Adaptive errors")
+
+
+def fig23(args, runs) -> None:
+    name, d = pick_run(runs, args.rewinds_run)
+    E = concat_sim_csvs(d, "rollback_errors", args.seed_min, args.seed_max)
+    if E.empty:
+        print(f"  SKIPPED: no rollback_errors rows in {csv_dir_of(d)}")
+        return
+    fig, ax = plt.subplots(figsize=(10, 5.4))
+    for k, c in ERR_COLORS.items():
+        sub = E[E["category"] == k]
+        if len(sub):
+            ax.scatter(sub["time"], sub["error"], s=48, color=c, edgecolor="white", label=f"{k.replace('_', ' ')} ({len(sub)})", zorder=3)
+    ax.axhline(CORRECTION_THRESHOLD, color="k", ls="--", lw=1, label=f"threshold {CORRECTION_THRESHOLD:g}")
+    ax.set_yscale("log")
+    ax.set_xlabel("Time of error")
+    ax.set_ylabel("RMS position error at the error")
+    ax.set_title(f"When the remaining errors occur (run {name}, {len(E)} errors, {E['simulation_id'].nunique()} experiments)")
+    ax.legend(fontsize=8.8)
+    save(fig, "fig23_error_timeline", args)
+
+
+# ---- E. drift repair and ablation ---------------------------------------
+def fig27(args, runs) -> None:
+    name, d, s = summary_for(args, runs)
+    base, adap, t = None, None, None
+    for sim in s["simulation_id"]:
+        df = read_sim(d, sim)
+        if df is None:
+            continue
+        b, a = truthy(df["baseline_exceeds_threshold"]).astype(int), truthy(df["adaptive_exceeds_threshold"]).astype(int)
+        if base is None:
+            base, adap, t = b.copy(), a.copy(), df["time"].to_numpy()
+        else:
+            m = min(len(base), len(b))
+            base, adap, t = base[:m] + b[:m], adap[:m] + a[:m], t[:m]
+    if base is None:
+        print("  SKIPPED: no validation csvs")
+        return
+    fig, ax = plt.subplots(figsize=(9.5, 5.4))
+    ax.step(t, np.cumsum(base), where="post", color="#c8553d", lw=2, label=f"Leapfrog only ({int(base.sum())})")
+    ax.step(t, np.cumsum(adap), where="post", color="#1d4e89", lw=2, label=f"adaptive, run {name} ({int(adap.sum())})")
+    ax.set_xlabel("Time")
+    ax.set_ylabel(f"Cumulative samples with error > {CORRECTION_THRESHOLD:g} (all experiments)")
+    ax.set_title("Cumulative error count: baseline vs adaptive")
+    ax.legend(loc="upper left")
+    save(fig, "fig27_cumulative_errors", args)
+
+
+def fig28(args, runs) -> None:
+    name, d, s = summary_for(args, runs)
+    v = s.set_index("simulation_id")["mean_error_reduction"].dropna().sort_values(ascending=False)
+    fig, ax = plt.subplots(figsize=(11, 5.2))
+    ax.bar(np.arange(len(v)), v.values, color=np.where(v.values < 0, "#c8553d", "#1d4e89"))
+    ax.axhline(0, color="k", lw=0.8)
+    neg = v[v < 0]
+    for i, (sim, val) in enumerate(v.items()):
+        if val < 0:
+            ax.annotate(f"{val:.2f}", (i, val), xytext=(0, -12), textcoords="offset points", ha="center", fontsize=8.5,
+                        color="#c8553d")
+    ax.set_xticks(np.arange(len(v)))
+    ax.set_xticklabels([i.split("_seed")[1] for i in v.index], rotation=90, fontsize=7.5)
+    ax.set_xlabel("Experiment (seed)")
+    ax.set_ylabel("mean_error_reduction")
+    ax.set_title(f"Per-experiment error reduction vs baseline (run {name}); {len(neg)} negative outliers shown in red")
+    save(fig, "fig28_error_reduction_ranking", args)
+
+
+def fig29(args, runs) -> None:
+    name, d, s = summary_for(args, runs)
+    cols = [("baseline_final_energy_drift", "Leapfrog only", "#c8553d"), ("adaptive_final_energy_drift", "adaptive", "#1d4e89"),
+            ("ias15_final_energy_drift", "IAS15", "#2a9d8f")]
+    data = [s[c].abs().clip(lower=1e-17).dropna().to_numpy() for c, _, _ in cols]
+    fig, ax = plt.subplots(figsize=(7.5, 5.4))
+    bp = ax.boxplot(data, widths=0.55, patch_artist=True, showfliers=False, medianprops={"color": "k"})
+    rng = np.random.default_rng(0)
+    for i, ((_, lab, c), v) in enumerate(zip(cols, data), start=1):
+        bp["boxes"][i - 1].set(facecolor=c, alpha=0.35)
+        ax.scatter(i + rng.uniform(-0.15, 0.15, len(v)), v, s=14, color=c, alpha=0.8, zorder=3)
+    ax.set_yscale("log")
+    ax.set_xticks([1, 2, 3])
+    ax.set_xticklabels([l for _, l, _ in cols])
+    ax.set_ylabel("|final relative energy drift|")
+    ax.set_title(f"Energy drift distributions (run {name}, {len(s)} experiments)")
+    save(fig, "fig29_energy_drift", args)
+
+
+def fig30(args, runs) -> None:
+    T = build_run_table(runs, args)
+    T = T[T["resyncs"] > 0]
+    if T.empty:
+        print("  SKIPPED: no run with resyncs")
+        return
+    T = T.sort_values("resyncs")
+    fig, ax = plt.subplots(figsize=(8, 5.4))
+    ax.plot(T["resyncs"], T["errors"], color="#999", lw=1.2, zorder=1)
+    ax.scatter(T["resyncs"], T["errors"], s=90, color="#1d4e89", zorder=3)
+    for _, r in T.iterrows():
+        ax.annotate(f"{r['run']}: {r['resyncs']:,} → {r['errors']}", (r["resyncs"], r["errors"]), xytext=(8, 7),
+                    textcoords="offset points", fontsize=9)
+    ax.set_xscale("log")
+    ax.set_ylim(bottom=0)
+    ax.set_xlabel("Total resyncs (log)")
+    ax.set_ylabel("Adaptive errors")
+    ax.set_title("Budget-resync count vs errors: diminishing returns")
+    save(fig, "fig30_resyncs_vs_errors", args)
+
+
+# ---- F. cost --------------------------------------------------------------
+def fig33(args, runs) -> None:
+    name, d, s = summary_for(args, runs)
+    if "n_rewound_steps" not in s:
+        print("  SKIPPED: n_rewound_steps not in the summary")
+        return
+    share = (100 * s["n_rewound_steps"] / s["n_steps"]).fillna(0).sort_values(ascending=False)
+    tot = 100 * s["n_rewound_steps"].sum() / s["n_steps"].sum()
+    fig, ax = plt.subplots(figsize=(11, 5))
+    ax.bar(np.arange(len(share)), share.values, color="#3b6ea5")
+    ax.axhline(tot, color="#c8553d", ls="--", lw=1.3, label=f"pooled overhead {tot:.2f}% of all steps")
+    ax.set_xticks(np.arange(len(share)))
+    ax.set_xticklabels([s.loc[i, "seed"] for i in share.index], rotation=90, fontsize=7.5)
+    ax.set_xlabel("Experiment (seed)")
+    ax.set_ylabel("Replayed steps (% of total steps)")
+    ax.set_title(f"Rewind overhead (run {name}): {int(s['n_rewound_steps'].sum()):,} replayed of {int(s['n_steps'].sum()):,} steps")
+    ax.legend()
+    save(fig, "fig33_rewind_overhead", args)
+
+
+# --------------------------------------------------------------------------
+FIGS = {1: fig01, 2: fig02, 4: fig04, 5: fig05, 6: fig06, 7: fig07, 8: fig08, 9: fig09, 10: fig10, 11: fig11,
+        12: fig12, 13: fig13, 14: fig14, 15: fig15, 18: fig18, 19: fig19, 20: fig20, 21: fig21, 22: fig22, 23: fig23,
+        24: fig24, 25: fig25, 26: fig26, 27: fig27, 28: fig28, 29: fig29, 30: fig30, 33: fig33}
 
 
 def parse_args() -> argparse.Namespace:
@@ -577,6 +1176,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--rewinds-run", default="G", help="run folder whose *_rewinds.csv feed fig 20 (G has 8 checkpoint depths)")
     p.add_argument("--resync-run", default="latest", help="run folder whose *_resyncs.csv feed fig 26")
     p.add_argument("--flat-ratio", type=float, default=1.5, help="fig 20: max/min deviation across depths below this = 'flat'")
+    p.add_argument("--summary-run", default="latest", help="run folder used by the summary-based figures (1, 2, 15, 27-29, 33)")
+    p.add_argument("--stretch-run", default="G", help="run folder whose *_stretches.csv feed figs 18-19 (all seeds are used)")
+    p.add_argument("--fp-threshold", type=float, default=CORRECTION_THRESHOLD, help="false-positive deviation threshold (fig 18)")
+    p.add_argument("--strip-n", type=int, default=12, help="number of experiments in the integrator timeline (fig 15)")
     p.add_argument("--clean-threshold", type=float, default=1e-9, help="fig 20: rollback-clean-threshold used in the runs")
     a = p.parse_args()
     a.out_dir = a.out_dir or os.path.join(a.outputs_dir, "report_figures")
