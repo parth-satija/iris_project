@@ -412,6 +412,14 @@ def parse_args() -> argparse.Namespace:
             "REBOUND's native run, which only stops at sample times)."
         ),
     )
+    parser.add_argument(
+        "--out-dir",
+        default=None,
+        help=(
+            "Folder for validation_summary.csv, csv/ and figures/ (default: outputs/validation). Lets sweeps keep "
+            "every run instead of overwriting the previous one (see run_sweeps.py)."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -466,7 +474,12 @@ def make_comparison_plot(csv_dir: str, figures_dir: str, safety_threshold: float
 
 def main() -> None:
     """Run the full validation experiment pipeline."""
+    global OUT_DIR, CSV_DIR, FIGURES_DIR
     args = parse_args()
+    if args.out_dir:
+        OUT_DIR = os.path.abspath(args.out_dir)
+        CSV_DIR = os.path.join(OUT_DIR, "csv")
+        FIGURES_DIR = os.path.join(OUT_DIR, "figures")
 
     try:
         index_scale = IndexScale(mode=args.index_scale, lo=args.index_lo, hi=args.index_hi)

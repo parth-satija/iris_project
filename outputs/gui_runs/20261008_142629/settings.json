@@ -1,0 +1,85 @@
+{
+  "n_experiments": 1,
+  "workers": 16,
+  "seed": 956,
+  "dt": 0.001,
+  "total_time": 200.0,
+  "correction_threshold": 0.01,
+  "three_body": true,
+  "plot": false,
+  "safety_threshold": 0.25,
+  "release_fraction": 0.6,
+  "ias15_hold_steps": 0,
+  "index_scale": "sigmoid",
+  "index_lo": null,
+  "index_hi": null,
+  "smoke_test_index": false,
+  "situation_index": false,
+  "correct": false,
+  "rewind": true,
+  "rewind_back": 4,
+  "checkpoint_count": 8,
+  "checkpoint_interval": 40,
+  "detect_false_positives": false,
+  "false_positive_threshold": null,
+  "analyze_rollback": false,
+  "rollback_clean_threshold": 1e-09,
+  "rollback_min_gain": 0.5,
+  "drift_budget": 0.0001,
+  "resync_on_switch": true,
+  "rewind_to_anchor": false,
+  "richardson_levels": 3,
+  "compensated_sums": false,
+  "chaos_control": false,
+  "system_source": "random",
+  "sample_every": 50,
+  "only_experiment": null,
+  "custom_system": {
+    "g": 1.0,
+    "softening": 0.0,
+    "bodies": [
+      {
+        "name": "1",
+        "mass": 23.4241,
+        "pos": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "vel": [
+          -0.865461,
+          0.295354,
+          1.00294
+        ]
+      },
+      {
+        "name": "2",
+        "mass": 9.91857,
+        "pos": [
+          -1.03694,
+          2.13127,
+          -0.53873
+        ],
+        "vel": [
+          -0.0935439,
+          -0.671072,
+          -2.47478
+        ]
+      },
+      {
+        "name": "3",
+        "mass": 8.52903,
+        "pos": [
+          0.0439818,
+          3.66992,
+          0.0287023
+        ],
+        "vel": [
+          2.48568,
+          -0.0307552,
+          0.123486
+        ]
+      }
+    ]
+  }
+}

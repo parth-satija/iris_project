@@ -1,0 +1,38 @@
+{
+  "index": 15,
+  "simulation_id": "sim_0015_n3_seed971",
+  "names": [
+    "1",
+    "2",
+    "3"
+  ],
+  "summary": {
+    "simulation_id": "sim_0015_n3_seed971",
+    "n_bodies": 3,
+    "n_samples": 4001,
+    "n_steps": 200000,
+    "n_ias15_steps": 132652,
+    "ias15_fraction": 0.66326,
+    "n_switches": 21,
+    "n_rewinds": 11,
+    "n_rewound_steps": 1997,
+    "n_resyncs": 11,
+    "n_stretches": 0,
+    "n_false_positive_stretches": 0,
+    "max_energy_drift": 1.632769700620115e-07,
+    "final_energy_drift": 7.23553795778755e-14,
+    "max_momentum_drift": 6.095323369897441e-14,
+    "wall_s": 31.496242600000187,
+    "cpu_s": 31.421875,
+    "per_body_mismatch": 1.8796919554198155e-06
+  },
+  "safety_threshold": 0.25,
+  "release_fraction": 0.6,
+  "dt": 0.001,
+  "total_time": 200.0,
+  "sample_interval": 0.05,
+  "g": 1.0,
+  "softening": 0.0,
+  "index_source": "formula",
+  "has_body_score": true
+}

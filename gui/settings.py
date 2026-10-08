@@ -50,6 +50,9 @@ class Flag:
     choices: tuple = ()
     inferred: bool = False
     aliases: tuple = ()
+    # True = needs an IAS15 / Leapfrog reference run (or oracle). This window runs ONLY the adaptive
+    # integrator, so these are shown but locked off.
+    reference_only: bool = False
 
 
 G_SYS = "System and batch"
@@ -77,12 +80,13 @@ FLAGS: tuple[Flag, ...] = (
          "experiment with the drift-repair options on."),
     Flag("correction_threshold", "--correction-threshold", "float", 1.0e-2, 1.0e-2, G_SYS,
          "Correction threshold",
-         "RMS position error that defines a failed sample (the calibration run would have had to "
-         "snap Leapfrog back to IAS15). With 'Correct' on, it is also where snapping happens."),
+         "RMS position error that defines a failed sample in the calibration. Here it is only the scale "
+         "for the drift budget and the default false-positive threshold; nothing is ever corrected."),
     Flag("three_body", "--three-body", "bool", False, True, G_SYS, "Three-body systems only",
          "Generate only 3-body systems. Without it, experiments cycle through 2, 3, 4 and 5 bodies."),
     Flag("plot", "--plot", "bool", False, False, G_SYS, "Save comparison plot",
-         "After the run, save validate_adaptive's comparison PNG for the first experiment."),
+         "validate_adaptive's comparison PNG. It needs IAS15 / Leapfrog reference runs, which this "
+         "window does not do.", reference_only=True),
     # ---- adaptive switching ----
     Flag("safety_threshold", "--safety-threshold", "float", 0.5, 0.25, G_ADAPT, "Safety threshold",
          "0-1 safety score at or above which the adaptive method uses IAS15. Higher = tolerate more "
@@ -106,8 +110,8 @@ FLAGS: tuple[Flag, ...] = (
          "Use the additive situation-weight index (core/situations.py) instead of the fitted formula. "
          "Keep the index scale on sigmoid."),
     Flag("correct", "--correct", "bool", False, True, G_ADAPT, "Online correction",
-         "At every sample, if the RMS position error vs IAS15 exceeds the correction threshold, snap "
-         "the state back to the IAS15 reference (adaptive run and Leapfrog baseline), as in main.py."),
+         "Snap the state back to an IAS15 reference when the error is too large. Needs a reference "
+         "run, which this window does not do, so it is always off here.", reference_only=True),
     # ---- rewinding ----
     Flag("rewind", "--rewind", "bool", False, True, G_REWIND, "Rewind on trigger",
          "Keep checkpoints in RAM; on a trigger restore an earlier one and continue with IAS15 from "
@@ -131,14 +135,13 @@ FLAGS: tuple[Flag, ...] = (
     # ---- rollback analysis ----
     Flag("analyze_rollback", "--analyze-rollback", "bool", False, True, G_ROLL, "Analyze rollback depth",
          "Count how many errors a deeper rollback could have prevented (needs Rewind). Uses the IAS15 "
-         "reference as an oracle; does not change the integration."),
+         "reference as an oracle. Needs a reference run, so it is always off here.", reference_only=True),
     Flag("rollback_clean_threshold", "--rollback-clean-threshold", "float", 1e-9, 1e-9, G_ROLL,
          "Clean threshold",
-         "Largest RMS deviation from the exact state that still counts as an adequate rewind target.",
-         inferred=True),
+         "Part of the rollback analysis (needs a reference run).", inferred=True, reference_only=True),
     Flag("rollback_min_gain", "--rollback-min-gain", "float", 0.5, 0.5, G_ROLL, "Minimum gain",
          "A rewind target is effective if it removes at least this fraction (0-1] of the un-rewound "
-         "state's error."),
+         "state's error. Part of the rollback analysis (needs a reference run).", reference_only=True),
     # ---- drift repair ----
     Flag("drift_budget", "--drift-budget", "float", 0.0, 1e-4, G_DRIFT, "Drift budget",
          "Accumulated-drift budget as a fraction of the correction threshold (0 = off). A dt/2 shadow "
@@ -158,8 +161,15 @@ FLAGS: tuple[Flag, ...] = (
          "with Richardson levels 3.", inferred=True, aliases=("--kahan",)),
     Flag("chaos_control", "--ias15-stepped", "bool", False, False, G_DRIFT, "IAS15 stepped (chaos control)",
          "Also run pure IAS15 forced to stop at every dt: a like-for-like timing baseline and the "
-         "chaos-floor control.", aliases=("--chaos-control",)),
+         "chaos-floor control. A separate run, so it is always off here.", aliases=("--chaos-control",),
+         reference_only=True),
     # ---- GUI only ----
+    Flag("system_source", None, "choice", "random", "random", G_GUI, "System source",
+         "'random': generate systems from the seed (as validate_adaptive does). 'custom': simulate the "
+         "bodies you place in the Setup tab.", choices=("random", "custom")),
+    Flag("sample_every", None, "int", 50, 50, G_GUI, "Sample every (steps)",
+         "Record a frame every this many dt steps. 50 matches validate_adaptive. Smaller = smoother "
+         "close encounters in the 3D view, larger = less memory."),
     Flag("only_experiment", None, "optint", None, None, G_GUI, "Run only experiment #",
          "Run just this experiment index (0-based) instead of all of them. Handy for a quick look at "
          "one system. Empty = run all."),
@@ -176,6 +186,26 @@ def latest_defaults() -> dict:
 def cli_defaults() -> dict:
     """What validate_adaptive.py uses when a flag is omitted."""
     return {f.dest: f.cli_default for f in FLAGS}
+
+
+def apply_locks(v: dict) -> list[str]:
+    """
+    Switch off every reference-only boolean flag in `v` (in place). Returns the CLI names of the
+    ones that were on, so the caller can tell the user they were ignored.
+    """
+    ignored = []
+    for f in FLAGS:
+        if f.reference_only and f.kind == "bool" and v.get(f.dest):
+            v[f.dest] = False
+            ignored.append(f.cli or f.dest)
+    return ignored
+
+
+def gui_defaults() -> dict:
+    """The latest-run settings with the reference-only flags locked off."""
+    v = latest_defaults()
+    apply_locks(v)
+    return v
 
 
 # --------------------------------------------------------------------------- text <-> value
@@ -254,8 +284,9 @@ def validate(v: dict) -> list[str]:
     steps = v["dt"] > 0 and v["total_time"] / v["dt"]
     if steps and steps < 1:
         e.append("Total time must be at least one dt.")
+    need(v["sample_every"] >= 1, "Sample every must be at least 1 step.")
     only = v["only_experiment"]
-    if only is not None:
+    if only is not None and v["system_source"] == "random":
         need(0 <= only < v["n_experiments"], f"Run-only experiment must be between 0 and {v['n_experiments'] - 1}.")
     return e
 
@@ -328,10 +359,11 @@ def load_json(path: str) -> dict:
     """Load settings, ignoring unknown keys and filling missing ones from the latest-run defaults."""
     with open(path, "r", encoding="utf-8") as fh:
         raw = json.load(fh)
-    values = latest_defaults()
+    values = gui_defaults()
     for dest, val in raw.items():
-        if dest in FLAG_BY_DEST:
+        if dest in FLAG_BY_DEST or dest == "custom_system":
             values[dest] = val
+    apply_locks(values)
     return values
 
 
@@ -342,4 +374,4 @@ def startup_defaults() -> tuple[dict, str]:
             return load_json(LAST_SETTINGS_PATH), "the last run of this GUI"
         except (OSError, ValueError):
             pass
-    return latest_defaults(), "the latest validate_adaptive.py run (reconstructed from its outputs)"
+    return gui_defaults(), "the latest validate_adaptive.py run (reconstructed from its outputs)"

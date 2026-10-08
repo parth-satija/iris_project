@@ -1,0 +1,8 @@
+feature,n,log_log_corr
+pre_correction_relative_velocity,19880,0.8723856986650091
+pre_correction_acceleration,19880,-0.6390235393900171
+mass_ratio,19880,-0.54791458487028
+pre_correction_nearest_neighbor_distance,19880,0.5349810873854481
+pre_correction_jerk,19880,-0.26197646726313006
+mass,19880,-0.08413360810693242
+timestep,19880,

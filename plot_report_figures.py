@@ -4,9 +4,11 @@ plot_report_figures.py
 Report figures for the IRIS adaptive-integrator work. This file implements the
 MUST-HAVE set, numbered as in the figure plan:
 
-Implemented: 1 2 4 5 6 7 8 9 10 11 12 13 14 15 18 19 20 21 22 23 24 25 26 27 28 29 30 33
-(4, 5, 6, 8, 9, 10 need `python export_model_results.py --three-body` first.)
-Not implemented (need reruns or are diagrams): 3 16 17 31 32 34 35 36 37 38 39
+All 39 figures are implemented. Needs extra data first:
+  4, 5, 6, 8, 9, 10   python export_model_results.py --three-body
+  3                   python export_feature_correlations.py (see fig03)
+  34, 35, 36, 32      a summary with --chaos-control columns (the --summary-run folder)
+  38, 39              python run_sweeps.py (writes outputs/sweeps/)
 
      5  Model comparison: grouped-CV AUC and weighted AUC with fold-std error bars   [needs export_model_results.py]
      9  Recall vs false-positive-rate trade-off, 0.80/0.90/0.95/0.99 recall marked    [needs export_model_results.py]
@@ -566,7 +568,7 @@ def fig26(args, runs) -> None:
 # Batch 2: figures built from existing files and from export_model_results.py
 # --------------------------------------------------------------------------
 STRETCH_ALL = (0, 10**12)  # stretches are not restricted to the 956-987 family
-ERR_COLORS = {"accumulated_drift": "#c8553d", "improvable": "#e9a03b", "after_adequate": "#3b6ea5",
+ERR_COLORS = {"accumulated_drift": "#c8553d", "improvable": "#e9a03b", "after_adequate_rewinds": "#3b6ea5",
               "undetected": "#777777"}
 
 
@@ -1155,9 +1157,360 @@ def fig33(args, runs) -> None:
 
 
 # --------------------------------------------------------------------------
-FIGS = {1: fig01, 2: fig02, 4: fig04, 5: fig05, 6: fig06, 7: fig07, 8: fig08, 9: fig09, 10: fig10, 11: fig11,
-        12: fig12, 13: fig13, 14: fig14, 15: fig15, 18: fig18, 19: fig19, 20: fig20, 21: fig21, 22: fig22, 23: fig23,
-        24: fig24, 25: fig25, 26: fig26, 27: fig27, 28: fig28, 29: fig29, 30: fig30, 33: fig33}
+# --------------------------------------------------------------------------
+# Batch 3: schematics, chaos floor, cost, body-count generalization, sweeps
+# --------------------------------------------------------------------------
+def _need_chaos(args, s, name: str) -> bool:
+    if "chaos_rate" not in s or s["chaos_rate"].notna().sum() == 0:
+        print(f"  SKIPPED: the summary of run {name!r} has no chaos-control data. Re-run validate_adaptive.py with "
+              f"--chaos-control (plus your usual flags).")
+        return False
+    return True
+
+
+def fig03(args, runs) -> None:
+    series = []
+    for tag, label, color in (("all", "mixed 2-5 body data", "#8e6bbf"), ("3body", "3-body data only", "#2a9d8f")):
+        p = os.path.join(args.analysis_dir, f"single_feature_corr_{tag}.csv")
+        if os.path.isfile(p):
+            series.append((label, color, pd.read_csv(p).set_index("feature")["log_log_corr"]))
+    if not series:
+        print("  SKIPPED: no single_feature_corr_*.csv. Run:\n"
+              "      python export_feature_correlations.py --csv-dir outputs/csv --tag all\n"
+              "      python export_feature_correlations.py --csv-dir outputs/csv_3body --tag 3body")
+        return
+    order = series[0][2].abs().sort_values().index
+    y = np.arange(len(order))
+    fig, ax = plt.subplots(figsize=(8.6, 0.75 * len(order) + 2))
+    h = 0.8 / len(series)
+    for k, (label, color, s) in enumerate(series):
+        v = s.reindex(order).to_numpy()
+        ax.barh(y + (k - (len(series) - 1) / 2) * h, v, h * 0.92, color=color, label=label)
+        for yi, vi in zip(y + (k - (len(series) - 1) / 2) * h, v):
+            if np.isfinite(vi):
+                ax.text(vi + (0.01 if vi >= 0 else -0.01), yi, f"{vi:+.2f}", va="center", ha="left" if vi >= 0 else "right", fontsize=8)
+    ax.axvline(0, color="k", lw=0.8)
+    ax.set_yticks(y)
+    ax.set_yticklabels([o.replace("pre_correction_", "") for o in order])
+    ax.set_xlabel("Pearson r of log10(feature) vs log10(error at trigger)")
+    ax.set_title("Single-feature log-log correlations with correction severity")
+    ax.legend(loc="lower right", fontsize=8.8)
+    save(fig, "fig03_single_feature_corr", args)
+
+
+def fig16(args, runs) -> None:
+    from matplotlib.patches import FancyArrowPatch, Rectangle
+    fig, ax = plt.subplots(figsize=(12, 5.2))
+    ax.set_xlim(-0.3, 13.2)
+    ax.set_ylim(-2.1, 3.1)
+    ax.axis("off")
+    ax.grid(False)
+    ax.add_patch(Rectangle((0, 0.9), 8.7, 0.5, fc="#e8eef5", ec="#999"))
+    ax.text(0.1, 1.55, "Leapfrog (every dt)", fontsize=10, color="#555")
+    cps = [1.0, 2.5, 4.0, 5.5, 7.0]
+    for i, x in enumerate(cps):
+        ax.add_patch(Rectangle((x - 0.17, 0.78), 0.34, 0.74, fc="#e9a03b", ec="#8a5a00", lw=1.2, zorder=3))
+        ax.text(x, 0.55, f"CP{i}", ha="center", fontsize=8.5)
+    ax.text(0.0, 2.9, "Checkpoint ring: the last N states (every --checkpoint-interval steps) are kept in RAM,\n"
+            "the oldest is dropped when a new one is stored.", fontsize=9.5, va="top")
+    ax.annotate("", xy=(cps[0], 1.62), xytext=(cps[-1], 1.62), arrowprops={"arrowstyle": "<->", "color": "#8a5a00"})
+    ax.text((cps[0] + cps[-1]) / 2, 1.7, "N checkpoints in the ring (CP4 = latest)", ha="center", fontsize=8.5, color="#8a5a00")
+    xt = 8.7
+    ax.scatter([xt], [1.15], s=170, marker="v", color="#d1495b", zorder=5)
+    ax.text(xt, 1.65, "TRIGGER\nscore ≥ threshold", ha="center", fontsize=9.5, color="#d1495b", fontweight="bold")
+    ax.add_patch(FancyArrowPatch((xt, 0.8), (cps[3], 0.8), connectionstyle="arc3,rad=0.35", arrowstyle="-|>",
+                                 mutation_scale=16, color="#d1495b", lw=1.8, zorder=4))
+    ax.text(7.1, 0.12, "restore CP (--rewind-back: 1 = second-latest)", ha="center", fontsize=9, color="#d1495b")
+    ax.add_patch(Rectangle((cps[3], -0.75), xt - cps[3], 0.42, fc="#1d4e89", ec="none"))
+    ax.text((cps[3] + xt) / 2, -0.54, "IAS15 replay", ha="center", va="center", color="white", fontsize=9.5, fontweight="bold")
+    ax.add_patch(Rectangle((xt, -0.75), 2.6, 0.42, fc="#7fa6cf", ec="none"))
+    ax.text(xt + 1.3, -0.54, "IAS15 continues", ha="center", va="center", color="white", fontsize=9.5, fontweight="bold")
+    ax.add_patch(Rectangle((xt + 2.6, -0.75), 1.3, 0.42, fc="#e8eef5", ec="#999"))
+    ax.text(xt + 3.25, -0.54, "Leapfrog", ha="center", va="center", fontsize=9, color="#555")
+    ax.annotate("", xy=(xt + 2.6, -0.95), xytext=(xt, -0.95), arrowprops={"arrowstyle": "<->", "color": "#555"})
+    ax.text(xt + 1.3, -1.5, "score < release threshold\n(+ optional --ias15-hold-steps)", ha="center", fontsize=8.8, color="#555")
+    ax.text(cps[3] - 0.15, -1.5, "Richardson resync of the restored state\n(--resync-on-switch, dt/2 shadow saved in the CP)",
+            ha="center", fontsize=8.8, color="#1d4e89")
+    ax.set_title("Rewind mechanism: trigger, restore, replay with IAS15, release", fontsize=12)
+    save(fig, "fig16_rewind_schematic", args)
+
+
+def fig17(args, runs) -> None:
+    thr, rel = args.safety_threshold, args.safety_threshold * args.release_fraction
+    t = np.linspace(0, 40, 1600)
+    score = thr * (0.72 + 0.28 * np.sin(0.55 * t) + 0.22 * np.sin(2.3 * t + 1) + 0.10 * np.sin(7.1 * t) + 0.35 * np.exp(-((t - 31) / 1.6) ** 2))
+
+    def run(release):
+        on, out = False, np.zeros(len(t), bool)
+        for i, sc in enumerate(score):
+            on = (sc >= thr) or (on and sc >= release)
+            out[i] = on
+        return out
+
+    hyst, plain = run(rel), run(thr)
+    n_h, n_p = int(np.sum(np.diff(hyst.astype(int)) == 1)), int(np.sum(np.diff(plain.astype(int)) == 1))
+    fig, ax = plt.subplots(2, 1, figsize=(10.5, 6.2), sharex=True, gridspec_kw={"height_ratios": [2.4, 1], "hspace": 0.08})
+    ax[0].plot(t, score, color="#444", lw=1.3, label="safety score (illustrative)")
+    ax[0].axhline(thr, color="#d1495b", ls="--", lw=1.3, label=f"trigger threshold {thr:g}")
+    ax[0].axhline(rel, color="#e07a3f", ls=":", lw=1.5, label=f"release threshold = {args.release_fraction:g} × {thr:g} = {rel:.3g}")
+    ax[0].fill_between(t, rel, thr, color="#e07a3f", alpha=0.12, label="hysteresis band")
+    ax[0].set_ylabel("Safety score")
+    ax[0].set_title("Hysteresis: IAS15 is entered at the threshold and left only below the release threshold")
+    ax[0].legend(loc="upper left", fontsize=8.8, ncol=2)
+    ax[1].fill_between(t, 0.55, 1, where=hyst, step="mid", color="#1d4e89", label=f"with hysteresis ({n_h} entries)")
+    ax[1].fill_between(t, 0, 0.45, where=plain, step="mid", color="#999", label=f"no hysteresis ({n_p} entries)")
+    ax[1].set_yticks([])
+    ax[1].set_xlabel("Time (illustrative)")
+    ax[1].legend(loc="upper left", fontsize=8.8, ncol=2, bbox_to_anchor=(0, 1.35))
+    save(fig, "fig17_hysteresis", args)
+
+
+def fig31(args, runs) -> None:
+    labels = ["Leapfrog", "+ dt/2 shadow\n(Richardson-2:\n--resync-on-switch,\n--drift-budget)", "+ dt/4 shadow\n(Richardson-3:\n--richardson-levels 3)"]
+    vals = [1, 1 + 2, 1 + 2 + 4]
+    fig, ax = plt.subplots(figsize=(7.5, 5))
+    bars = ax.bar(range(3), vals, color=["#c8553d", "#e9a03b", "#1d4e89"], width=0.6)
+    for b, v, txt in zip(bars, vals, ["1", "1 + 2 = 3", "1 + 2 + 4 = 7"]):
+        ax.text(b.get_x() + b.get_width() / 2, v + 0.15, txt, ha="center", fontweight="bold")
+    ax.set_xticks(range(3))
+    ax.set_xticklabels(labels, fontsize=9)
+    ax.set_ylabel("Force evaluations per Leapfrog step")
+    ax.set_title("Cost of the drift-repair shadows (per dt of Leapfrog)")
+    ax.text(0.5, -0.32, "A shadow at dt/2 takes 2 half-steps and one at dt/4 takes 4 quarter-steps per dt, one force evaluation each.",
+            transform=ax.transAxes, ha="center", fontsize=8, color="#555")
+    save(fig, "fig31_force_evaluations", args)
+
+
+def fig32(args, runs) -> None:
+    name, d, s = summary_for(args, runs)
+    if "cpu_control_s" not in s or s["cpu_control_s"].notna().sum() == 0:
+        print(f"  SKIPPED: run {name!r} has no cpu_control_s. Re-run with --chaos-control: without it the IAS15 timing is "
+              f"REBOUND's native C run and the comparison is not like-for-like.")
+        return
+    s = s.sort_values("cpu_control_s").reset_index(drop=True)
+    cols = [("cpu_leapfrog_s", "Leapfrog", "#c8553d"), ("cpu_adaptive_s", "adaptive", "#1d4e89"),
+            ("cpu_control_s", "IAS15 stepped every dt", "#2a9d8f")]
+    x = np.arange(len(s))
+    fig, ax = plt.subplots(figsize=(12, 5.4))
+    for k, (c, lab, colr) in enumerate(cols):
+        ax.bar(x + (k - 1) * 0.27, s[c].clip(lower=1e-3), 0.27, color=colr, label=lab)
+    ax.set_yscale("log")
+    ax.set_xticks(x)
+    ax.set_xticklabels([str(v) for v in s["seed"]], rotation=90, fontsize=7.5)
+    ax.set_xlabel("Experiment (seed), sorted by IAS15-stepped CPU time")
+    ax.set_ylabel("CPU seconds (worker process)")
+    tot = {lab: s[c].sum() for c, lab, _ in cols}
+    ax.set_title(f"CPU time per experiment (run {name}): adaptive = {tot['adaptive'] / tot['IAS15 stepped every dt']:.1f}× and "
+                 f"Leapfrog = {tot['Leapfrog'] / tot['IAS15 stepped every dt']:.1f}× the IAS15-stepped total")
+    ax.legend(loc="upper left")
+    ax.text(0, -0.3, "Adaptive CPU time includes the oracle / shadow work of --analyze-rollback and --detect-false-positives; "
+            "re-time without them for a fair cost figure.", transform=ax.transAxes, fontsize=8, color="#555")
+    save(fig, "fig32_cpu_time", args)
+
+
+def fig34(args, runs) -> None:
+    name, d, s = summary_for(args, runs)
+    if not _need_chaos(args, s, name):
+        return
+    ok = s[s["chaos_rate"].notna() & (s["chaos_rate"] > 0)].sort_values("chaos_floor_time")
+    pick = ok.iloc[np.unique(np.linspace(0, len(ok) - 1, min(6, len(ok))).round().astype(int))]
+    colors = plt.cm.viridis(np.linspace(0, 0.9, len(pick)))
+    fig, (ax, axh) = plt.subplots(1, 2, figsize=(12.5, 5.4), gridspec_kw={"width_ratios": [1.8, 1]})
+    for c, (_, r) in zip(colors, pick.iterrows()):
+        df = read_sim(d, r["simulation_id"])
+        if df is None or "control_position_error" not in df:
+            continue
+        t, ctrl = df["time"].to_numpy(), df["control_position_error"].clip(lower=1e-16).to_numpy()
+        ax.plot(t, ctrl, color=c, lw=1.1, label=f"seed {int(r['seed'])}: Lyapunov time {1 / r['chaos_rate']:.1f}")
+        grow = (ctrl > 1e-13) & (ctrl < 1e-3) & (t > 0)
+        if grow.sum() >= 5:
+            slope, icpt = np.polyfit(t[grow], np.log(ctrl[grow]), 1)
+            tt = np.linspace(t[grow].min(), t[grow].max(), 50)
+            ax.plot(tt, np.exp(icpt + slope * tt), ls="--", color=c, lw=1.5)
+    ax.axhline(CORRECTION_THRESHOLD, color="k", ls="--", lw=1, label=f"threshold {CORRECTION_THRESHOLD:g}")
+    ax.set_yscale("log")
+    ax.set_xlabel("Time")
+    ax.set_ylabel("Control error (IAS15 stepped every dt vs IAS15 reference)")
+    ax.set_title("Chaos floor: exponential growth of the control error (dashed = fit)")
+    ax.legend(fontsize=8, loc="lower right")
+    lyap = 1.0 / ok["chaos_rate"]
+    axh.hist(lyap, bins=15, color="#3b6ea5", alpha=0.85)
+    axh.axvline(lyap.median(), color="k", ls=":", lw=1.2)
+    axh.text(lyap.median(), axh.get_ylim()[1] * 0.95, f" median {lyap.median():.1f}", va="top", fontsize=9)
+    axh.set_xlabel("Lyapunov time = 1 / fitted rate")
+    axh.set_ylabel("Experiments")
+    axh.set_title(f"All {len(ok)} experiments with a fit")
+    save(fig, "fig34_chaos_floor_growth", args)
+
+
+def fig35(args, runs) -> None:
+    name, d, s = summary_for(args, runs)
+    if not _need_chaos(args, s, name):
+        return
+    cols = [("errors_floor", "floor (pure IAS15 fails too: not fixable)", "#c8553d"),
+            ("errors_marginal", "marginal (control error ≥ 0.1 × threshold)", "#e9a03b"),
+            ("errors_fixable", "fixable (control still accurate)", "#2a9d8f")]
+    tot = [int(s[c].fillna(0).sum()) for c, _, _ in cols]
+    w = s[(s[[c for c, _, _ in cols]].fillna(0).sum(axis=1) > 0)].copy()
+    w["tot"] = w[[c for c, _, _ in cols]].fillna(0).sum(axis=1)
+    w = w.sort_values("tot", ascending=False)
+    fig, (a1, a2) = plt.subplots(1, 2, figsize=(12, 5), gridspec_kw={"width_ratios": [1, 2.2]})
+    bottom = 0
+    for (c, lab, colr), v in zip(cols, tot):
+        a1.bar([0], [v], bottom=bottom, color=colr, label=f"{lab}: {v}")
+        if v:
+            a1.text(0, bottom + v / 2, str(v), ha="center", va="center", color="white", fontweight="bold")
+        bottom += v
+    a1.set_xticks([0])
+    a1.set_xticklabels([f"run {name}\n{sum(tot)} adaptive errors"])
+    a1.set_ylabel("Adaptive errors")
+    a1.legend(loc="upper center", bbox_to_anchor=(0.5, -0.18), fontsize=8)
+    bottom = np.zeros(len(w))
+    for c, lab, colr in cols:
+        v = w[c].fillna(0).to_numpy(float)
+        a2.bar(np.arange(len(w)), v, bottom=bottom, color=colr)
+        bottom += v
+    a2.set_xticks(np.arange(len(w)))
+    a2.set_xticklabels([str(int(x)) for x in w["seed"]], rotation=90, fontsize=8)
+    a2.set_xlabel("Experiment (seed), only experiments with errors")
+    a2.set_ylabel("Adaptive errors")
+    a2.set_title("Which remaining errors are unfixable?")
+    save(fig, "fig35_error_floor_split", args)
+
+
+def fig36(args, runs) -> None:
+    name, d, s = summary_for(args, runs)
+    if not _need_chaos(args, s, name):
+        return
+    v = s.set_index("seed")["residual_factor_needed"].dropna().sort_values(ascending=False)
+    if v.empty:
+        print("  SKIPPED: no experiment has a residual_factor_needed (needs an adaptive error and a positive chaos rate)")
+        return
+    fig, ax = plt.subplots(figsize=(10, 5.2))
+    ax.bar(np.arange(len(v)), v.values, color="#3b6ea5")
+    ax.axhline(1, color="k", lw=0.8)
+    ax.set_yscale("log")
+    ax.set_xticks(np.arange(len(v)))
+    ax.set_xticklabels([str(int(i)) for i in v.index], rotation=90, fontsize=8)
+    ax.set_xlabel("Experiment (seed), only experiments with an adaptive error")
+    ax.set_ylabel("exp(rate × gap): how many times smaller the injected error must be")
+    ax.set_title(f"Residual factor needed to reach the chaos floor (run {name}, median {v.median():.2g}×, n={len(v)})")
+    save(fig, "fig36_residual_factor", args)
+
+
+def fig37(args, runs) -> None:
+    name, d = pick_run(runs, args.bodycount_run)
+    rows = []
+    for f in sim_files(csv_dir_of(d), "validation", *STRETCH_ALL):
+        try:
+            df = pd.read_csv(f, usecols=["body_count", "baseline_exceeds_threshold", "adaptive_exceeds_threshold",
+                                         "ias15_step_fraction"])
+        except ValueError:
+            continue
+        if df.empty:
+            continue
+        rows.append({"seed": seed_of(f), "bodies": int(df["body_count"].iloc[0]),
+                     "baseline": int(truthy(df["baseline_exceeds_threshold"]).sum()),
+                     "adaptive": int(truthy(df["adaptive_exceeds_threshold"]).sum()),
+                     "share": 100 * float(df["ias15_step_fraction"].iloc[-1])})
+    if not rows:
+        print(f"  SKIPPED: no validation csvs in {csv_dir_of(d)}")
+        return
+    R = pd.DataFrame(rows)
+    G = R.groupby("bodies").agg(n=("seed", "size"), baseline=("baseline", "mean"), adaptive=("adaptive", "mean"),
+                                share=("share", "mean"), with_err=("adaptive", lambda x: (x > 0).mean() * 100))
+    print(G.round(2).to_string())
+    fig, (a1, a2) = plt.subplots(1, 2, figsize=(11.5, 5))
+    x = np.arange(len(G))
+    a1.bar(x - 0.18, G["baseline"], 0.36, color="#c8553d", label="Leapfrog only")
+    a1.bar(x + 0.18, G["adaptive"], 0.36, color="#1d4e89", label="adaptive")
+    for xi, (_, r) in zip(x, G.iterrows()):
+        a1.text(xi, max(r["baseline"], r["adaptive"]) * 1.03 + 0.02, f"n={int(r['n'])}", ha="center", fontsize=8.5)
+    a1.set_xticks(x)
+    a1.set_xticklabels([f"{b} bodies" for b in G.index])
+    a1.set_ylabel(f"Errors per experiment (error > {CORRECTION_THRESHOLD:g})")
+    a1.set_title("Errors by body count (index fitted on 3-body only)")
+    a1.legend()
+    a2.bar(x, G["share"], 0.5, color="#2a9d8f")
+    for xi, v in zip(x, G["share"]):
+        a2.text(xi, v + 0.5, f"{v:.1f}%", ha="center", fontsize=9)
+    a2.set_xticks(x)
+    a2.set_xticklabels([f"{b} bodies" for b in G.index])
+    a2.set_ylabel("Mean IAS15 step share (%)")
+    a2.set_title(f"Cost by body count (run {name} files, all seed families)")
+    save(fig, "fig37_by_body_count", args)
+
+
+def _sweep_points(args, prefix: str):
+    pts = []
+    root = args.sweeps_dir
+    for dname in sorted(os.listdir(root)) if os.path.isdir(root) else []:
+        m = re.fullmatch(rf"{prefix}_(.+)", dname)
+        p = os.path.join(root, dname, "validation_summary.csv")
+        if not m or not os.path.isfile(p):
+            continue
+        try:
+            v = float(m.group(1))
+        except ValueError:
+            continue
+        s = pd.read_csv(p)
+        pts.append((v, int(s["adaptive_n_errors"].sum()), 100 * float(s["ias15_step_fraction"].mean()), len(s)))
+    return sorted(pts)
+
+
+def _twin(ax, pts, xlabel: str, log: bool = False) -> None:
+    x = [p[0] for p in pts]
+    ax.plot(x, [p[1] for p in pts], "o-", color="#1d4e89", lw=2)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel("Adaptive errors", color="#1d4e89")
+    ax.set_ylim(bottom=0)
+    ax2 = ax.twinx()
+    ax2.plot(x, [p[2] for p in pts], "s--", color="#e07a3f", lw=2)
+    ax2.set_ylabel("Mean IAS15 step share (%)", color="#e07a3f")
+    ax2.set_ylim(bottom=0)
+    ax2.grid(False)
+    ax2.spines["right"].set_visible(True)
+    if log:
+        ax.set_xscale("log")
+    ax.set_xticks(x)
+    ax.set_xticklabels([f"{v:g}" for v in x])
+
+
+SWEEP_HINT = ('      python run_sweeps.py --base-args "<the flags of your latest run>" --groups {g}')
+
+
+def fig38(args, runs) -> None:
+    pts = _sweep_points(args, "threshold")
+    if len(pts) < 2:
+        print(f"  SKIPPED: no threshold sweep in {args.sweeps_dir}. Run:\n" + SWEEP_HINT.format(g="threshold"))
+        return
+    fig, ax = plt.subplots(figsize=(8.5, 5))
+    _twin(ax, pts, "Safety threshold", log=True)
+    ax.set_title(f"Threshold sweep ({pts[0][3]} experiments per point): accuracy vs cost")
+    save(fig, "fig38_threshold_sweep", args)
+
+
+def fig39(args, runs) -> None:
+    params = [("checkpoint_count", "checkpoint_count"), ("checkpoint_interval", "checkpoint_interval (steps)"),
+              ("rewind_back", "rewind_back")]
+    data = [(p, lab, _sweep_points(args, p)) for p, lab in params]
+    data = [d for d in data if len(d[2]) >= 2]
+    if not data:
+        print(f"  SKIPPED: no rewind-parameter sweeps in {args.sweeps_dir}. Run:\n"
+              + SWEEP_HINT.format(g="checkpoint_count checkpoint_interval rewind_back"))
+        return
+    fig, axes = plt.subplots(1, len(data), figsize=(5.6 * len(data), 4.8), squeeze=False)
+    for ax, (p, lab, pts) in zip(axes[0], data):
+        _twin(ax, pts, lab)
+        ax.set_title(f"Sensitivity to {p}")
+    save(fig, "fig39_rewind_sensitivity", args)
+
+
+# --------------------------------------------------------------------------
+FIGS = {1: fig01, 2: fig02, 3: fig03, 4: fig04, 5: fig05, 6: fig06, 7: fig07, 8: fig08, 9: fig09, 10: fig10,
+        11: fig11, 12: fig12, 13: fig13, 14: fig14, 15: fig15, 16: fig16, 17: fig17, 18: fig18, 19: fig19, 20: fig20,
+        21: fig21, 22: fig22, 23: fig23, 24: fig24, 25: fig25, 26: fig26, 27: fig27, 28: fig28, 29: fig29, 30: fig30,
+        31: fig31, 32: fig32, 33: fig33, 34: fig34, 35: fig35, 36: fig36, 37: fig37, 38: fig38, 39: fig39}
 
 
 def parse_args() -> argparse.Namespace:
@@ -1179,11 +1532,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--summary-run", default="latest", help="run folder used by the summary-based figures (1, 2, 15, 27-29, 33)")
     p.add_argument("--stretch-run", default="G", help="run folder whose *_stretches.csv feed figs 18-19 (all seeds are used)")
     p.add_argument("--fp-threshold", type=float, default=CORRECTION_THRESHOLD, help="false-positive deviation threshold (fig 18)")
+    p.add_argument("--bodycount-run", default="G", help="run folder whose *_validation.csv (all seed families) feed fig 37")
+    p.add_argument("--sweeps-dir", default=None, help="default: <outputs-dir>/sweeps (written by run_sweeps.py; figs 38-39)")
     p.add_argument("--strip-n", type=int, default=12, help="number of experiments in the integrator timeline (fig 15)")
     p.add_argument("--clean-threshold", type=float, default=1e-9, help="fig 20: rollback-clean-threshold used in the runs")
     a = p.parse_args()
     a.out_dir = a.out_dir or os.path.join(a.outputs_dir, "report_figures")
     a.analysis_dir = a.analysis_dir or os.path.join(a.outputs_dir, "analysis")
+    a.sweeps_dir = a.sweeps_dir or os.path.join(a.outputs_dir, "sweeps")
     return a
 
 

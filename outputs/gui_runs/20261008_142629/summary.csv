@@ -1,0 +1,2 @@
+simulation_id,n_bodies,n_samples,n_steps,n_ias15_steps,ias15_fraction,n_switches,n_rewinds,n_rewound_steps,n_resyncs,n_stretches,n_false_positive_stretches,max_energy_drift,final_energy_drift,max_momentum_drift,wall_s,cpu_s,per_body_mismatch
+sim_0000_n3_seed956,3,4001,200000,160662,0.80331,236,118,21119,119,0,0,8.66447005788192e-07,8.66447005788192e-07,1.793398112140115e-13,23.101780099999814,23.078125,2.0572514207395365e-05
