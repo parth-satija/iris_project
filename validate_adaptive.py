@@ -38,6 +38,12 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+
+# One math-library thread per worker process: parallelism comes from the process pool, and OpenBLAS/OMP would
+# otherwise start one thread (plus buffers) per CPU core in EVERY worker, which exhausts RAM with ~32 workers.
+# Must run before numpy is imported anywhere; setdefault lets you override from the shell.
+for _var in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+    os.environ.setdefault(_var, "1")
 import time
 
 import numpy as np
@@ -513,6 +519,17 @@ def main() -> None:
 
     start_time = time.perf_counter()
 
+    from core.jit_kernels import HAVE_NUMBA, warm_up
+
+    warm_up()  # compile / cache the Leapfrog kernels once, before the workers start
+    if HAVE_NUMBA:
+        print("Leapfrog kernels: compiled (Numba) - timings compare algorithms, not interpreters.")
+    else:
+        print(
+            "WARNING: Numba not available (pip install numba). Leapfrog runs as interpreted NumPy, so its "
+            "wall-clock is dominated by Python overhead and is NOT comparable to IAS15 (compiled C)."
+        )
+
     print(f"Generating {args.n_experiments} experiment configurations (seed {args.seed}+i)...")
     config_paths = generate_calibration_batch(
         n_experiments=args.n_experiments,
@@ -688,6 +705,9 @@ def main() -> None:
                       f"{v.sum() / base.sum():7.2f} (median {r.median():.2f}, min {r.min():.2f}, max {r.max():.2f})")
             n_fast = int((summary[cols["adaptive"]] < base).sum())
             print(f"  adaptive faster than IAS15-only in {n_fast}/{len(summary)} experiments")
+            if summary[cols["Leapfrog"]].sum() > base.sum():
+                print("  WARNING: Leapfrog-only is slower than IAS15-only. Per step Leapfrog does 1 force evaluation, "
+                      "IAS15 dozens, so this is interpreter overhead (install numba), not a real cost ordering.")
 
         if has_ctl:
             print("IAS15-only = IAS15 stepped at every dt: same dt and same Python stepping/recording loop as the others")

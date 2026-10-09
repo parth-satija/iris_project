@@ -1,0 +1,10 @@
+^D:\IRIS_CALIBRATION\CPP\BUILD\CMAKEFILES\BF848407014B088B0B2A8FBD1419B163\GENERATE.STAMP.RULE
+setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SD:/iris_calibration/cpp -BD:/iris_calibration/cpp/build --check-stamp-list CMakeFiles/generate.stamp.list --vs-solution-file D:/iris_calibration/cpp/build/iris_adaptive.slnx
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

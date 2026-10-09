@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="18.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <CustomBuild Include="D:\iris_calibration\cpp\build\_deps\rebound-subbuild\CMakeFiles\84b000974367bf1f061c905f40135087\generate.stamp.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="CMake Rules">
+      <UniqueIdentifier>{D3B80377-38A0-3F01-B9E3-69E7793D2C19}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

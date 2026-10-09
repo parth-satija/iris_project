@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"D:/iris_calibration/cpp/build/_deps/rebound-subbuild/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

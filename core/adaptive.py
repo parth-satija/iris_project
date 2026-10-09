@@ -158,6 +158,7 @@ from typing import Callable
 import numpy as np
 import rebound
 
+from core.jit_kernels import HAVE_NUMBA
 from core.leapfrog import Trajectory
 from core.metrics import position_error
 from core.physics import System, compute_accelerations
@@ -167,6 +168,9 @@ from core.safety_index import (
     compute_safety_features,
     system_safety_score,
 )
+
+if HAVE_NUMBA:
+    from core.jit_kernels import vv_step_kernel
 
 
 @dataclass
@@ -521,6 +525,8 @@ def _vv_step(state, masses, g, softening, h, comp):
     comp=False reproduces the plain update bit for bit; comp=True carries the rounding error of the
     position and velocity sums (cp, cv) forward instead of throwing it away."""
     pos, vel, acc, cp, cv = state
+    if HAVE_NUMBA:  # compiled, identical arithmetic (incl. the Kahan updates)
+        return vv_step_kernel(pos, vel, acc, cp, cv, masses, float(g), float(softening) * float(softening), float(h), bool(comp))
     if comp:
         pos, cp = _kahan_add(pos, cp, vel * h + 0.5 * acc * h * h)
     else:

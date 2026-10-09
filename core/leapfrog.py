@@ -24,8 +24,11 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from core.jit_kernels import HAVE_NUMBA
 from core.physics import System, compute_accelerations
 
+if HAVE_NUMBA:
+    from core.jit_kernels import vv_advance_kernel
 
 @dataclass
 class Trajectory:
@@ -213,6 +216,24 @@ def run_leapfrog(
     # Initial acceleration, reused as a(t) for the first half-kick.
     acc = compute_accelerations(positions, masses, g=g, softening=softening)
 
+    if HAVE_NUMBA:
+        # Compiled path: one kernel call per sample interval (positions / velocities updated in
+        # place), same arithmetic and operation order as the NumPy loop below.
+        eps2 = float(softening) * float(softening)
+        for s in range(1, n_steps // steps_per_sample + 1):
+            acc = vv_advance_kernel(
+                positions, velocities, acc, masses, float(g), eps2, float(dt), steps_per_sample
+            )
+            times_out.append((s * steps_per_sample) * dt)
+            positions_out.append(positions.copy())
+            velocities_out.append(velocities.copy())
+        return Trajectory(
+            times=np.array(times_out, dtype=np.float64),
+            positions=np.array(positions_out, dtype=np.float64),
+            velocities=np.array(velocities_out, dtype=np.float64),
+            masses=masses,
+        )
+
     current_time = 0.0
     for step in range(1, n_steps + 1):
         # Position update: x(t+dt) = x(t) + v(t)*dt + 0.5*a(t)*dt^2
@@ -352,26 +373,41 @@ def run_leapfrog_with_correction(
 
     sample_idx = 0  # index 0 corresponds to t = 0.0, already recorded above
 
+    fast = HAVE_NUMBA  # compiled kernel (core/jit_kernels.py); same arithmetic, no interpreter overhead
+    eps2 = float(softening) * float(softening)
     current_time = 0.0
-    for step in range(1, n_steps + 1):
-        # Acceleration entering this step, a(t) -- kept under its own name
-        # (rather than relying on `acc` post-reassignment below) so that,
-        # if a correction fires this step, we can still report the true
-        # pre-correction jerk as a finite difference at the integrator's
-        # own internal dt resolution: (a(t+dt) - a(t)) / dt.
-        acc_before_step = acc
+    step = 0
+    while step < n_steps:
+        step += 1
+        if fast:
+            # Run up to this sample's LAST step in one compiled call, then take that last step
+            # separately so a(t) entering it is available for the pre-correction jerk.
+            block_end = min(((step - 1) // steps_per_sample + 1) * steps_per_sample, n_steps)
+            if block_end > step:
+                acc = vv_advance_kernel(positions, velocities, acc, masses, float(g), eps2, float(dt), block_end - step)
+            step = block_end
+            acc_before_step = acc
+            acc = vv_advance_kernel(positions, velocities, acc, masses, float(g), eps2, float(dt), 1)
+            current_time = step * dt
+        else:
+            # Acceleration entering this step, a(t) -- kept under its own name
+            # (rather than relying on `acc` post-reassignment below) so that,
+            # if a correction fires this step, we can still report the true
+            # pre-correction jerk as a finite difference at the integrator's
+            # own internal dt resolution: (a(t+dt) - a(t)) / dt.
+            acc_before_step = acc
 
-        # Position update: x(t+dt) = x(t) + v(t)*dt + 0.5*a(t)*dt^2
-        positions = positions + velocities * dt + 0.5 * acc * dt * dt
+            # Position update: x(t+dt) = x(t) + v(t)*dt + 0.5*a(t)*dt^2
+            positions = positions + velocities * dt + 0.5 * acc * dt * dt
 
-        # Acceleration at the new positions: a(t+dt)
-        new_acc = compute_accelerations(positions, masses, g=g, softening=softening)
+            # Acceleration at the new positions: a(t+dt)
+            new_acc = compute_accelerations(positions, masses, g=g, softening=softening)
 
-        # Velocity update: v(t+dt) = v(t) + 0.5*(a(t) + a(t+dt))*dt
-        velocities = velocities + 0.5 * (acc + new_acc) * dt
+            # Velocity update: v(t+dt) = v(t) + 0.5*(a(t) + a(t+dt))*dt
+            velocities = velocities + 0.5 * (acc + new_acc) * dt
 
-        acc = new_acc
-        current_time = step * dt
+            acc = new_acc
+            current_time = step * dt
 
         if step % steps_per_sample == 0:
             sample_idx += 1

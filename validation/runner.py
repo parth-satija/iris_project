@@ -26,8 +26,11 @@ import pandas as pd
 
 from calibration.generator import load_experiment_config
 from calibration.runner import DEFAULT_WORKERS, _config_to_system
-from core.adaptive import run_adaptive
-from core.leapfrog import run_leapfrog, run_leapfrog_with_correction
+from core.adaptive_cpp import run_adaptive_fast as run_adaptive  # C++ loop; falls back to Python if unavailable/unsupported
+from core.leapfrog_cpp import (  # C++ baseline: same compiled force kernel as the adaptive loop (fair timing)
+    run_leapfrog_fast as run_leapfrog,
+    run_leapfrog_with_correction_fast as run_leapfrog_with_correction,
+)
 from core.rebound_reference import run_ias15, run_ias15_stepped
 from core.safety_index import IndexScale, resolve_raw_index_fn
 from validation.compare import build_validation_frame, summarize_validation

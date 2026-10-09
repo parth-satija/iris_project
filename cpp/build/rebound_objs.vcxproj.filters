@@ -1,0 +1,106 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="18.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="D:\iris_calibration\cpp\build\_deps\rebound-src\src\binarydata.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\iris_calibration\cpp\build\_deps\rebound-src\src\boundary.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\iris_calibration\cpp\build\_deps\rebound-src\src\collision.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\iris_calibration\cpp\build\_deps\rebound-src\src\communication_mpi.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\iris_calibration\cpp\build\_deps\rebound-src\src\derivatives.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\iris_calibration\cpp\build\_deps\rebound-src\src\display.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\iris_calibration\cpp\build\_deps\rebound-src\src\fmemopen.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\iris_calibration\cpp\build\_deps\rebound-src\src\frequency_analysis.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\iris_calibration\cpp\build\_deps\rebound-src\src\glad.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\iris_calibration\cpp\build\_deps\rebound-src\src\gravity.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\iris_calibration\cpp\build\_deps\rebound-src\src\integrator_bs.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\iris_calibration\cpp\build\_deps\rebound-src\src\integrator_eos.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\iris_calibration\cpp\build\_deps\rebound-src\src\integrator_ias15.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\iris_calibration\cpp\build\_deps\rebound-src\src\integrator_janus.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\iris_calibration\cpp\build\_deps\rebound-src\src\integrator_leapfrog.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\iris_calibration\cpp\build\_deps\rebound-src\src\integrator_mercurius.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\iris_calibration\cpp\build\_deps\rebound-src\src\integrator_saba.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\iris_calibration\cpp\build\_deps\rebound-src\src\integrator_sei.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\iris_calibration\cpp\build\_deps\rebound-src\src\integrator_trace.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\iris_calibration\cpp\build\_deps\rebound-src\src\integrator_whfast.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\iris_calibration\cpp\build\_deps\rebound-src\src\integrator_whfast512.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\iris_calibration\cpp\build\_deps\rebound-src\src\output.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\iris_calibration\cpp\build\_deps\rebound-src\src\particle.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\iris_calibration\cpp\build\_deps\rebound-src\src\rebound.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\iris_calibration\cpp\build\_deps\rebound-src\src\rotations.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\iris_calibration\cpp\build\_deps\rebound-src\src\server.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\iris_calibration\cpp\build\_deps\rebound-src\src\simulation.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\iris_calibration\cpp\build\_deps\rebound-src\src\simulationarchive.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\iris_calibration\cpp\build\_deps\rebound-src\src\tools.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\iris_calibration\cpp\build\_deps\rebound-src\src\transformations.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="D:\iris_calibration\cpp\build\_deps\rebound-src\src\tree.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="D:\iris_calibration\cpp\CMakeLists.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{304BA6CA-5C98-357F-96FE-12F28DC085EA}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

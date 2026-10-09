@@ -1,0 +1,114 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="18.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="D:\iris_calibration\cpp\src\iris_adaptive.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="D:\iris_calibration\cpp\CMakeLists.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <Object Include="D:\iris_calibration\cpp\build\rebound_objs.dir\$(Configuration)\binarydata.obj">
+      <Filter>Object Libraries</Filter>
+    </Object>
+    <Object Include="D:\iris_calibration\cpp\build\rebound_objs.dir\$(Configuration)\boundary.obj">
+      <Filter>Object Libraries</Filter>
+    </Object>
+    <Object Include="D:\iris_calibration\cpp\build\rebound_objs.dir\$(Configuration)\collision.obj">
+      <Filter>Object Libraries</Filter>
+    </Object>
+    <Object Include="D:\iris_calibration\cpp\build\rebound_objs.dir\$(Configuration)\communication_mpi.obj">
+      <Filter>Object Libraries</Filter>
+    </Object>
+    <Object Include="D:\iris_calibration\cpp\build\rebound_objs.dir\$(Configuration)\derivatives.obj">
+      <Filter>Object Libraries</Filter>
+    </Object>
+    <Object Include="D:\iris_calibration\cpp\build\rebound_objs.dir\$(Configuration)\display.obj">
+      <Filter>Object Libraries</Filter>
+    </Object>
+    <Object Include="D:\iris_calibration\cpp\build\rebound_objs.dir\$(Configuration)\fmemopen.obj">
+      <Filter>Object Libraries</Filter>
+    </Object>
+    <Object Include="D:\iris_calibration\cpp\build\rebound_objs.dir\$(Configuration)\frequency_analysis.obj">
+      <Filter>Object Libraries</Filter>
+    </Object>
+    <Object Include="D:\iris_calibration\cpp\build\rebound_objs.dir\$(Configuration)\glad.obj">
+      <Filter>Object Libraries</Filter>
+    </Object>
+    <Object Include="D:\iris_calibration\cpp\build\rebound_objs.dir\$(Configuration)\gravity.obj">
+      <Filter>Object Libraries</Filter>
+    </Object>
+    <Object Include="D:\iris_calibration\cpp\build\rebound_objs.dir\$(Configuration)\integrator_bs.obj">
+      <Filter>Object Libraries</Filter>
+    </Object>
+    <Object Include="D:\iris_calibration\cpp\build\rebound_objs.dir\$(Configuration)\integrator_eos.obj">
+      <Filter>Object Libraries</Filter>
+    </Object>
+    <Object Include="D:\iris_calibration\cpp\build\rebound_objs.dir\$(Configuration)\integrator_ias15.obj">
+      <Filter>Object Libraries</Filter>
+    </Object>
+    <Object Include="D:\iris_calibration\cpp\build\rebound_objs.dir\$(Configuration)\integrator_janus.obj">
+      <Filter>Object Libraries</Filter>
+    </Object>
+    <Object Include="D:\iris_calibration\cpp\build\rebound_objs.dir\$(Configuration)\integrator_leapfrog.obj">
+      <Filter>Object Libraries</Filter>
+    </Object>
+    <Object Include="D:\iris_calibration\cpp\build\rebound_objs.dir\$(Configuration)\integrator_mercurius.obj">
+      <Filter>Object Libraries</Filter>
+    </Object>
+    <Object Include="D:\iris_calibration\cpp\build\rebound_objs.dir\$(Configuration)\integrator_saba.obj">
+      <Filter>Object Libraries</Filter>
+    </Object>
+    <Object Include="D:\iris_calibration\cpp\build\rebound_objs.dir\$(Configuration)\integrator_sei.obj">
+      <Filter>Object Libraries</Filter>
+    </Object>
+    <Object Include="D:\iris_calibration\cpp\build\rebound_objs.dir\$(Configuration)\integrator_trace.obj">
+      <Filter>Object Libraries</Filter>
+    </Object>
+    <Object Include="D:\iris_calibration\cpp\build\rebound_objs.dir\$(Configuration)\integrator_whfast.obj">
+      <Filter>Object Libraries</Filter>
+    </Object>
+    <Object Include="D:\iris_calibration\cpp\build\rebound_objs.dir\$(Configuration)\integrator_whfast512.obj">
+      <Filter>Object Libraries</Filter>
+    </Object>
+    <Object Include="D:\iris_calibration\cpp\build\rebound_objs.dir\$(Configuration)\output.obj">
+      <Filter>Object Libraries</Filter>
+    </Object>
+    <Object Include="D:\iris_calibration\cpp\build\rebound_objs.dir\$(Configuration)\particle.obj">
+      <Filter>Object Libraries</Filter>
+    </Object>
+    <Object Include="D:\iris_calibration\cpp\build\rebound_objs.dir\$(Configuration)\rebound.obj">
+      <Filter>Object Libraries</Filter>
+    </Object>
+    <Object Include="D:\iris_calibration\cpp\build\rebound_objs.dir\$(Configuration)\rotations.obj">
+      <Filter>Object Libraries</Filter>
+    </Object>
+    <Object Include="D:\iris_calibration\cpp\build\rebound_objs.dir\$(Configuration)\server.obj">
+      <Filter>Object Libraries</Filter>
+    </Object>
+    <Object Include="D:\iris_calibration\cpp\build\rebound_objs.dir\$(Configuration)\simulation.obj">
+      <Filter>Object Libraries</Filter>
+    </Object>
+    <Object Include="D:\iris_calibration\cpp\build\rebound_objs.dir\$(Configuration)\simulationarchive.obj">
+      <Filter>Object Libraries</Filter>
+    </Object>
+    <Object Include="D:\iris_calibration\cpp\build\rebound_objs.dir\$(Configuration)\tools.obj">
+      <Filter>Object Libraries</Filter>
+    </Object>
+    <Object Include="D:\iris_calibration\cpp\build\rebound_objs.dir\$(Configuration)\transformations.obj">
+      <Filter>Object Libraries</Filter>
+    </Object>
+    <Object Include="D:\iris_calibration\cpp\build\rebound_objs.dir\$(Configuration)\tree.obj">
+      <Filter>Object Libraries</Filter>
+    </Object>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="Object Libraries">
+      <UniqueIdentifier>{79195732-F280-3612-BE3D-C002A23A0D23}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{304BA6CA-5C98-357F-96FE-12F28DC085EA}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

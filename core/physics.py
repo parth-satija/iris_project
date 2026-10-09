@@ -16,6 +16,11 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from core.jit_kernels import HAVE_NUMBA
+
+if HAVE_NUMBA:
+    from core.jit_kernels import acc_kernel as _acc_kernel
+
 # Default gravitational constant in SI-like "simulation units".
 # Callers may override this via the `g` parameter of the functions below,
 # or by constructing a System with a different `g` value.
@@ -146,6 +151,13 @@ def compute_accelerations(
     Returns:
         shape-(N, 3) float64 array of accelerations, one per body.
     """
+    if HAVE_NUMBA:  # compiled, same operation order as the NumPy code below
+        return _acc_kernel(
+            np.ascontiguousarray(positions, dtype=np.float64),
+            np.ascontiguousarray(masses, dtype=np.float64),
+            float(g),
+            float(softening) * float(softening),
+        )
     n = positions.shape[0]
     diff, dist = pairwise_separations(positions)  # diff[i,j] = r_j - r_i
 
